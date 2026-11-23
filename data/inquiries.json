@@ -1,0 +1,23 @@
+[
+  {
+    "kind": "contact",
+    "referenceId": "MSG-MWMIZWIS",
+    "userId": null,
+    "name": "سعود الدوسري",
+    "contact": "0504445556",
+    "topic": "استفسار عام عن السوق",
+    "message": "أستفسر عن تفاصيل باقة التاجر والمربي.",
+    "receivedAt": "2026-11-18T19:40:08.932Z"
+  },
+  {
+    "kind": "service_request",
+    "referenceId": "SRV-MWMIZXSO",
+    "userId": null,
+    "serviceType": "نقل المواشي والأغنام",
+    "region": "منطقة الرياض",
+    "phone": "0551112223",
+    "name": "",
+    "details": "نقل 12 رأس حري من جدة إلى الطائف صباح السبت.",
+    "receivedAt": "2026-11-18T19:40:10.584Z"
+  }
+]

@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1794755121800,
+      "tag": "0000_boring_karma",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1794755123453,
+      "tag": "0001_arabic_search_trgm",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794755200000,
+      "tag": "0002_google_auth_identities",
+      "breakpoints": true
+    }
+  ]
+}

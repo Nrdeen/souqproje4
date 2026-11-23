@@ -1,0 +1,11 @@
+{
+  // Frontend (React, runs in the browser): DOM + Vite client types, and NO Node types, so browser code
+  // cannot accidentally depend on Node-only APIs. Backend config: ../tsconfig.json.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["vite/client"]
+  },
+  "include": ["./**/*.ts", "./**/*.tsx"]
+}

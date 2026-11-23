@@ -1,0 +1,96 @@
+# SouqAlGhanam 2.0 (سوق الغنم 2.0) — Oracle Cloud Always Free (ARM64 Ampere A1) Stack
+# Services: PostgreSQL 16 + Node/Express/Vite SPA + Nginx TLS Reverse Proxy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: souqalghanam-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-souqalghanam}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.oci}
+      SOUQ_APP_DB_USER: ${SOUQ_APP_DB_USER:-souq_app}
+      SOUQ_APP_DB_PASSWORD: ${SOUQ_APP_DB_PASSWORD:?Set SOUQ_APP_DB_PASSWORD in .env.oci}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - max_connections=60
+      - -c
+      - log_min_duration_statement=500
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./deploy/postgres/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - souq_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-souqalghanam}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: souqalghanam-app
+    restart: unless-stopped
+    env_file:
+      - .env.oci
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      STORAGE_BACKEND: postgres
+      DATA_DIR: /app/data
+      PG_SSL_MODE: ${PG_SSL_MODE:-disable}
+    volumes:
+      - app_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - souq_internal
+    ports:
+      - "127.0.0.1:3000:3000"
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: souqalghanam-nginx
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx.oci.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/certbot/www:/var/www/certbot:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    networks:
+      - souq_internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/nginx-health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  pg_data:
+  app_data:
+
+networks:
+  souq_internal:
+    driver: bridge
