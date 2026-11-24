@@ -2,6 +2,7 @@ import type { AdminOverviewStats, AdminReportItem, AdminUserSummary, AuditLogEnt
 import type { SessionRecord } from '../auth/sessions';
 import type { Credential } from '../auth/types';
 import type { VerifiedGoogleClaims } from '../auth/google';
+import type { VerifiedFacebookClaims } from '../auth/facebook';
 import type { StoreData } from '../domain/marketplace';
 import type { LikeAction } from '../likes';
 import type { MediaAsset } from '../media';
@@ -28,10 +29,16 @@ export interface MarketplaceRepository {
   // Auth & sessions
   findUserById(userId: string): Promise<any | undefined>;
   findUserByPhone(phone: string): Promise<any | undefined>;
+  findUserByEmail(email: string): Promise<any | undefined>;
   getCredential(userId: string): Promise<Credential | undefined>;
   updateCredential(userId: string, passwordHash: string): Promise<void>;
-  getUserAuthMeta(userId: string): Promise<{ googleLinked: boolean; hasPassword: boolean }>;
+  getUserAuthMeta(userId: string): Promise<{
+    googleLinked: boolean;
+    facebookLinked: boolean;
+    hasPassword: boolean;
+  }>;
   findUserByGoogleSubject(subject: string): Promise<any | undefined>;
+  findUserByFacebookSubject(subject: string): Promise<any | undefined>;
   authenticateWithGoogle(params: {
     claims: VerifiedGoogleClaims;
     role?: 'buyer' | 'seller';
@@ -40,6 +47,7 @@ export interface MarketplaceRepository {
     user: any;
     isNewUser: boolean;
     googleLinked: boolean;
+    facebookLinked: boolean;
     hasPassword: boolean;
   }>;
   linkGoogleIdentity(params: {
@@ -48,6 +56,27 @@ export interface MarketplaceRepository {
   }): Promise<{
     user: any;
     googleLinked: boolean;
+    facebookLinked: boolean;
+    hasPassword: boolean;
+  }>;
+  authenticateWithFacebook(params: {
+    claims: VerifiedFacebookClaims;
+    role?: 'buyer' | 'seller';
+    mode?: 'login' | 'register';
+  }): Promise<{
+    user: any;
+    isNewUser: boolean;
+    googleLinked: boolean;
+    facebookLinked: boolean;
+    hasPassword: boolean;
+  }>;
+  linkFacebookIdentity(params: {
+    userId: string;
+    claims: VerifiedFacebookClaims;
+  }): Promise<{
+    user: any;
+    googleLinked: boolean;
+    facebookLinked: boolean;
     hasPassword: boolean;
   }>;
   completeUserProfile(params: {
@@ -58,11 +87,13 @@ export interface MarketplaceRepository {
   }): Promise<{
     user: any;
     googleLinked: boolean;
+    facebookLinked: boolean;
     hasPassword: boolean;
   }>;
   registerUser(params: {
     name: string;
     phone: string;
+    email?: string | null;
     role: 'buyer' | 'seller';
     passwordHash: string;
   }): Promise<{ user: any; seller?: any }>;

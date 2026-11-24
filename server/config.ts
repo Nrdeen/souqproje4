@@ -53,6 +53,12 @@ export interface AppConfig {
   googleClientSecret?: string;
   /** Optional explicit OAuth redirect URI override. */
   googleRedirectUri?: string;
+  /** Public Facebook App ID (safe to check for enabling social auth). */
+  facebookAppId?: string;
+  /** Server-only Facebook App Secret for authorization code exchange and appsecret_proof. Never expose to clients. */
+  facebookAppSecret?: string;
+  /** Optional explicit Facebook OAuth redirect URI override. */
+  facebookRedirectUri?: string;
 }
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -310,6 +316,9 @@ export function loadConfig(
     googleClientId: env.GOOGLE_CLIENT_ID?.trim() || undefined,
     googleClientSecret: env.GOOGLE_CLIENT_SECRET?.trim() || undefined,
     googleRedirectUri: env.GOOGLE_REDIRECT_URI?.trim() || undefined,
+    facebookAppId: env.FACEBOOK_APP_ID?.trim() || undefined,
+    facebookAppSecret: env.FACEBOOK_APP_SECRET?.trim() || undefined,
+    facebookRedirectUri: env.FACEBOOK_REDIRECT_URI?.trim() || undefined,
     ...overrides,
   };
   return config;

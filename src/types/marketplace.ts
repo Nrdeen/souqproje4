@@ -15,6 +15,7 @@ export interface User {
   phoneVerified?: boolean;
   needsPhoneCompletion?: boolean;
   googleLinked?: boolean;
+  facebookLinked?: boolean;
   hasPassword?: boolean;
 }
 
@@ -22,6 +23,11 @@ export interface GoogleAuthConfig {
   enabled: boolean;
   clientId: string | null;
   codeFlowEnabled: boolean;
+}
+
+export interface FacebookAuthConfig {
+  enabled: boolean;
+  appId: string | null;
 }
 
 export type SellerVerificationStatus = 'Pending' | 'Verified' | 'Rejected';
@@ -460,6 +466,8 @@ export interface BootstrapPayload {
   csrfToken: string | null;
   /** Public Google OAuth / GIS client configuration (never contains secrets). */
   googleAuth?: GoogleAuthConfig;
+  /** Public Facebook OAuth configuration (never contains secrets). */
+  facebookAuth?: FacebookAuthConfig;
   /** Platform commission rate, launch exemption policy, featured fee & bank info. */
   commissionSettings?: import('../lib/commission').CommissionSettings;
   /** Live launch-promo / rate eligibility for the signed-in seller. */

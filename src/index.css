@@ -3,7 +3,7 @@
 
 @layer base {
   :root {
-    --color-canvas: #FAF8F3;
+    --color-canvas: #FCFBF8;
     --color-surface: #FFFFFF;
     --color-surface-warm: #FFFDF9;
     --color-cream: #F3EFE4;
@@ -27,7 +27,7 @@
   }
 
   .dark {
-    --color-canvas: #0B1310;
+    --color-canvas: #0E1814;
     --color-surface: #121D18;
     --color-surface-warm: #15221C;
     --color-cream: #182620;
@@ -206,8 +206,8 @@
 
 /* Luxury Editorial Navbar — Refined & Proportional */
 :root {
-  --nav-bg: #f5f3ed;
-  --nav-head: #fffdf7;
+  --nav-bg: #f9f8f4;
+  --nav-head: #ffffff;
   --nav-surface: #ffffff;
   --nav-panel: #faf7ef;
   --nav-text: #183a2b;
@@ -221,8 +221,8 @@
 }
 
 .dark {
-  --nav-bg: #0b1511;
-  --nav-head: #11251c;
+  --nav-bg: #0f1d17;
+  --nav-head: #162f24;
   --nav-surface: #152c22;
   --nav-panel: #193429;
   --nav-text: #f5f2e8;
@@ -233,20 +233,6 @@
   --nav-button: #e6c477;
   --nav-button-text: #15251c;
   --nav-shadow: #0007;
-}
-
-.souq-announcement {
-  background: #091c15;
-  color: #d6c18d;
-  border-bottom: 1px solid #d9bc7030;
-  font-size: 13px;
-  text-align: center;
-  padding: 7px 16px;
-  letter-spacing: 0.1px;
-}
-
-.souq-announcement b {
-  color: #f5e2b0;
 }
 
 .souq-header {
@@ -723,6 +709,22 @@
   background: var(--nav-hover);
 }
 
+.souq-avatar-trigger {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  justify-content: center;
+  border-radius: 10px;
+  border: 1px solid var(--nav-border);
+  background: var(--nav-hover);
+}
+
+.souq-avatar-trigger:hover,
+.souq-avatar-trigger[aria-expanded='true'] {
+  border-color: var(--nav-gold);
+  background: color-mix(in srgb, var(--nav-gold) 18%, var(--nav-surface));
+}
+
 .souq-post {
   display: flex;
   align-items: center;
@@ -949,10 +951,6 @@
 }
 
 @media (max-width: 520px) {
-  .souq-announcement {
-    font-size: 12px;
-    padding: 6px 12px;
-  }
   .souq-header-inner {
     padding: 0 10px;
     gap: 6px;
@@ -1336,5 +1334,43 @@
 .souq-dhb-paused .souq-dhb-glow {
   animation-play-state: paused !important;
 }
+
+/* =========================================================
+   Homepage Live Activity Ticker (Celebim-style marquee)
+   ========================================================= */
+@keyframes souqActivityScrollLtr {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes souqActivityScrollRtl {
+  to {
+    transform: translateX(50%);
+  }
+}
+
+.souq-activity-track {
+  animation: souqActivityScrollLtr 42s linear infinite;
+}
+
+[dir='rtl'] .souq-activity-track {
+  animation-name: souqActivityScrollRtl;
+}
+
+.souq-activity-track:hover,
+.souq-activity-track:focus-within {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .souq-activity-track {
+    animation: none !important;
+  }
+  .souq-activity-copy {
+    display: none !important;
+  }
+}
+
 
 

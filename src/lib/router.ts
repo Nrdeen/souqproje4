@@ -40,6 +40,9 @@ export type DashboardTab =
   | 'favorites'
   | 'likes'
   | 'messages'
+  | 'subscription'
+  | 'settings'
+  | 'notifications'
   | 'analytics'
   | 'admin';
 
@@ -63,6 +66,9 @@ const VALID_DASHBOARD_TABS = new Set<DashboardTab>([
   'favorites',
   'likes',
   'messages',
+  'subscription',
+  'settings',
+  'notifications',
   'analytics',
   'admin',
 ]);

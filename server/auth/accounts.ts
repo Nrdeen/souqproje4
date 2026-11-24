@@ -31,6 +31,7 @@ export function createUserRecord(input: {
 
 export function createGoogleIdentityRecord(input: {
   userId: string;
+  provider?: 'google' | 'facebook';
   subject: string;
   email: string;
   emailVerified: boolean;
@@ -38,10 +39,11 @@ export function createGoogleIdentityRecord(input: {
   pictureUrl?: string | null;
 }): GoogleIdentityRecord {
   const nowIso = new Date().toISOString();
+  const provider: 'google' | 'facebook' = input.provider === 'facebook' ? 'facebook' : 'google';
   return {
-    id: `gid_${crypto.randomUUID().slice(0, 10)}`,
+    id: `${provider === 'facebook' ? 'fbid' : 'gid'}_${crypto.randomUUID().slice(0, 10)}`,
     userId: input.userId,
-    provider: 'google',
+    provider,
     subject: input.subject,
     email: input.email.trim().toLowerCase(),
     emailVerified: Boolean(input.emailVerified),

@@ -41,3 +41,13 @@ export function validatePassword(password: unknown, phone?: string): string | nu
   }
   return null;
 }
+
+const EMAIL_REGEX = /^[^\s@<>()[\]\\,;:"']+@[^\s@<>()[\]\\,;:"']+\.[^\s@<>()[\]\\,;:"']{2,}$/;
+
+export function normalizeEmail(input: unknown): string | null {
+  if (typeof input !== 'string') return null;
+  const trimmed = input.trim().toLowerCase();
+  if (!trimmed || trimmed.length > 255) return null;
+  if (!EMAIL_REGEX.test(trimmed)) return null;
+  return trimmed;
+}

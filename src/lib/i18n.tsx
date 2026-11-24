@@ -81,11 +81,17 @@ interface TranslationBundle {
   menuProfile: string;
   menuMyListings: string;
   menuFavorites: string;
+  menuMessages: string;
+  menuSubscription: string;
+  menuSettings: string;
+  menuNotifications: string;
   menuLogout: string;
+  memberBadge: string;
   addListing: string;
   addListingShort: string;
   notificationsTitle: string;
   notificationsEmpty: string;
+  viewAllNotifications: string;
   markAllRead: string;
   newBadge: string;
   themeLight: string;
@@ -230,14 +236,20 @@ const AR_BUNDLE: TranslationBundle = {
   signIn: 'تسجيل الدخول',
   myAccount: 'حسابي',
   menuDashboard: 'لوحة التحكم',
-  menuProfile: 'الملف الشخصي',
+  menuProfile: 'ملفي الشخصي',
   menuMyListings: 'إعلاناتي',
   menuFavorites: 'المفضلة',
+  menuMessages: 'الرسائل',
+  menuSubscription: 'باقتي واشتراكي',
+  menuSettings: 'الإعدادات',
+  menuNotifications: 'الإشعارات',
   menuLogout: 'تسجيل الخروج',
+  memberBadge: 'عضو سوق الغنم',
   addListing: 'أضف إعلانك',
   addListingShort: 'أضف إعلان',
   notificationsTitle: 'الإشعارات',
-  notificationsEmpty: 'لا توجد إشعارات حالياً. ستصلك التنبيهات فور تلقي رسالة أو سؤال أو رد أو تحديث على عرض سعر.',
+  notificationsEmpty: 'لا توجد إشعارات حالياً',
+  viewAllNotifications: 'عرض كل الإشعارات',
   markAllRead: 'تحديد الكل كمقروء',
   newBadge: 'جديد',
   themeLight: 'الوضع الفاتح',
@@ -392,14 +404,20 @@ const EN_BUNDLE: TranslationBundle = {
   signIn: 'Sign In',
   myAccount: 'My Account',
   menuDashboard: 'Dashboard',
-  menuProfile: 'Profile',
+  menuProfile: 'My Profile',
   menuMyListings: 'My Listings',
   menuFavorites: 'Favorites',
+  menuMessages: 'Messages',
+  menuSubscription: 'My Subscription',
+  menuSettings: 'Settings',
+  menuNotifications: 'Notifications',
   menuLogout: 'Sign Out',
+  memberBadge: 'Souq Member',
   addListing: 'Post Listing',
   addListingShort: 'Post',
   notificationsTitle: 'Notifications',
-  notificationsEmpty: 'No notifications yet. Alerts will appear here when messages, comments, or offers arrive.',
+  notificationsEmpty: 'No notifications yet',
+  viewAllNotifications: 'View all notifications',
   markAllRead: 'Mark all as read',
   newBadge: 'New',
   themeLight: 'Light mode',

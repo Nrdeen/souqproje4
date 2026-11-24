@@ -7,15 +7,18 @@ import {
   BookOpen,
   Calculator,
   Check,
+  CheckCheck,
   CheckCircle2,
   ChevronDown,
   Compass,
+  CreditCard,
   FileText,
   Gift,
   Globe,
   Heart,
   HelpCircle,
   LayoutDashboard,
+  LayoutGrid,
   Lock,
   LogOut,
   MessageCircle,
@@ -23,6 +26,7 @@ import {
   Moon,
   Package,
   Scale,
+  Settings,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
@@ -63,8 +67,16 @@ interface HeaderProps {
   notifications: AppNotification[];
   onOpenNotification: (notification: AppNotification) => void;
   onMarkAllNotificationsRead: () => void;
+  unreadMessagesCount?: number;
   currentUser: User | null;
   onLogout: () => void;
+}
+
+function getUserInitials(name: string | undefined): string {
+  const parts = (name || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '';
+  if (parts.length === 1) return parts[0].slice(0, 1);
+  return `${parts[0].slice(0, 1)}${parts[parts.length - 1].slice(0, 1)}`;
 }
 
 type MegaMenuKey = 'listings' | 'breeds' | 'breeders' | 'services';
@@ -465,6 +477,7 @@ export function Header({
   notifications,
   onOpenNotification,
   onMarkAllNotificationsRead,
+  unreadMessagesCount = 0,
   currentUser,
   onLogout,
 }: HeaderProps) {
@@ -489,49 +502,68 @@ export function Header({
   const unreadCount = notifications.filter((n) => !n.read).length;
   const roleNavItems = getRoleAwareNavItems(currentUser?.role ?? null);
   const hasAdminNav = roleNavItems.some((item) => item.dashboardTab === 'admin');
-  const userInitial = currentUser?.name?.trim().charAt(0) || '';
+  const userInitials = getUserInitials(currentUser?.name);
 
   const formatRoleLabel = (role: User['role']) => {
     if (role === 'admin') return t.roleAdmin;
-    if (role === 'seller') return t.roleSeller;
-    return t.roleBuyer;
+    return t.memberBadge;
   };
 
   const accountMenuItems: Array<{
     key: string;
     label: string;
     dashboardTab: DashboardTab;
-    icon: typeof LayoutDashboard;
+    icon: typeof UserIcon;
+    badge?: number;
   }> = currentUser
     ? [
-        {
-          key: 'dashboard',
-          label: t.menuDashboard,
-          dashboardTab: hasAdminNav ? 'admin' : 'analytics',
-          icon: LayoutDashboard,
-        },
         {
           key: 'profile',
           label: t.menuProfile,
           dashboardTab: 'profile',
           icon: UserIcon,
         },
-        ...(currentUser.role === 'seller' || currentUser.role === 'admin'
-          ? [
-              {
-                key: 'my-listings',
-                label: t.menuMyListings,
-                dashboardTab: 'my-listings' as DashboardTab,
-                icon: Package,
-              },
-            ]
-          : []),
+        {
+          key: 'my-listings',
+          label: t.menuMyListings,
+          dashboardTab: 'my-listings',
+          icon: LayoutGrid,
+        },
         {
           key: 'favorites',
           label: t.menuFavorites,
           dashboardTab: 'favorites',
           icon: Heart,
         },
+        {
+          key: 'messages',
+          label: t.menuMessages,
+          dashboardTab: 'messages',
+          icon: MessageSquare,
+          badge: unreadMessagesCount > 0 ? unreadMessagesCount : undefined,
+        },
+        {
+          key: 'subscription',
+          label: t.menuSubscription,
+          dashboardTab: 'subscription',
+          icon: CreditCard,
+        },
+        {
+          key: 'settings',
+          label: t.menuSettings,
+          dashboardTab: 'settings',
+          icon: Settings,
+        },
+        ...(hasAdminNav
+          ? [
+              {
+                key: 'admin',
+                label: isEn ? 'Admin Panel' : 'لوحة المشرف',
+                dashboardTab: 'admin' as DashboardTab,
+                icon: ShieldCheck,
+              },
+            ]
+          : []),
       ]
     : [];
 
@@ -857,18 +889,6 @@ export function Header({
 
   return (
     <>
-      <div className="souq-announcement" dir={dir}>
-        {isEn ? (
-          <>
-            Souq Al-Ghanam 2.0 <b>—</b> Direct breeder-to-buyer Saudi livestock marketplace in SAR
-          </>
-        ) : (
-          <>
-            سوق الغنم 2.0 <b>—</b> المنصة السعودية المتخصصة لربط المربّين والمشترين مباشرة
-          </>
-        )}
-      </div>
-
       <header
         ref={headerRef}
         id="header"
@@ -1055,287 +1075,330 @@ export function Header({
               )}
             </div>
 
-            {currentUser && (
-              <div className="relative" ref={notifContainerRef}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    dismissDesktopMenu();
-                    setSearchOpen(false);
-                    setAccountOpen(false);
-                    setLangOpen(false);
-                    setNotifOpen((prev) => !prev);
-                  }}
-                  aria-label={`${t.notificationsTitle}${unreadCount > 0 ? ` (${unreadCount})` : ''}`}
-                  aria-expanded={notifOpen}
-                  aria-haspopup="true"
-                  className="souq-icon-btn"
-                >
-                  {unreadCount > 0 ? (
-                    <BellRing size={17} style={{ color: 'var(--nav-gold)' }} aria-hidden="true" />
-                  ) : (
-                    <Bell size={17} aria-hidden="true" />
-                  )}
-                  {unreadCount > 0 && (
-                    <span className="absolute -top-1 -end-1 min-w-[17px] h-[17px] px-1 rounded-full bg-[var(--nav-gold)] text-[#15251c] text-[10px] font-bold tabular-nums flex items-center justify-center">
-                      {unreadCount > 9 ? '+9' : unreadCount}
-                    </span>
-                  )}
-                </button>
-
-                {notifOpen && (
-                  <div
-                    role="region"
-                    aria-label={t.notificationsTitle}
-                    className="fixed inset-x-3 top-[82px] w-auto sm:absolute sm:inset-x-auto sm:end-0 sm:top-full sm:mt-2 sm:w-96 max-w-[calc(100vw-1.5rem)] bg-[var(--color-surface-warm)] rounded-xl border border-[var(--color-border)] shadow-[0_18px_42px_-10px_rgba(0,0,0,0.28)] overflow-hidden z-50 text-[var(--color-ink)]"
-                  >
-                    <div className="px-4 py-3 bg-[var(--color-cream)]/60 border-b border-[var(--color-border)] flex items-center justify-between gap-2">
-                      <span className="font-display text-sm font-bold text-[var(--color-ink)]">
-                        {t.notificationsTitle} ({notifications.length})
-                      </span>
-                      {unreadCount > 0 && (
-                        <button
-                          type="button"
-                          onClick={onMarkAllNotificationsRead}
-                          className="text-xs font-semibold text-[var(--color-green-ink)] hover:underline cursor-pointer"
-                        >
-                          {t.markAllRead}
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="max-h-[70vh] sm:max-h-96 overflow-y-auto divide-y divide-[var(--color-border)]">
-                      {notifications.length === 0 ? (
-                        <div className="p-6 text-center space-y-2">
-                          <div className="w-10 h-10 rounded-xl bg-[var(--color-cream)] border border-[var(--color-border)] text-[var(--color-muted)] flex items-center justify-center mx-auto">
-                            <Bell size={18} aria-hidden="true" />
-                          </div>
-                          <p className="text-xs text-[var(--color-muted)] leading-relaxed">
-                            {t.notificationsEmpty}
-                          </p>
-                        </div>
-                      ) : (
-                        notifications.slice(0, 12).map((item) => (
-                          <button
-                            key={item.id}
-                            type="button"
-                            onClick={() => {
-                              onOpenNotification(item);
-                              setNotifOpen(false);
-                            }}
-                            className={`w-full text-start p-3.5 transition-colors flex items-start gap-3 cursor-pointer ${
-                              item.read
-                                ? 'bg-[var(--color-surface)] hover:bg-[var(--color-cream)]/50'
-                                : 'bg-[var(--color-cream)] hover:bg-[var(--color-cream-hover)]'
-                            }`}
-                          >
-                            <div className="w-8 h-8 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-center mt-0.5 shrink-0">
-                              {item.type === 'offer_accepted' ||
-                              item.type === 'listing_approved' ||
-                              item.type === 'commission_approved' ? (
-                                <CheckCircle2
-                                  size={16}
-                                  className="text-[var(--color-green-ink)]"
-                                  aria-hidden="true"
-                                />
-                              ) : item.type === 'featured_approved' ? (
-                                <Sparkles
-                                  size={16}
-                                  className="text-[var(--color-gold)]"
-                                  aria-hidden="true"
-                                />
-                              ) : item.type === 'commission_due' ||
-                                item.type === 'commission_submitted' ? (
-                                <BadgePercent
-                                  size={16}
-                                  className="text-[var(--color-green-ink)]"
-                                  aria-hidden="true"
-                                />
-                              ) : item.type === 'offer_rejected' ||
-                                item.type === 'listing_rejected' ||
-                                item.type === 'commission_rejected' ? (
-                                <XCircle
-                                  size={16}
-                                  className="text-red-700 dark:text-red-400"
-                                  aria-hidden="true"
-                                />
-                              ) : item.type === 'seller_verified' ? (
-                                <ShieldCheck
-                                  size={16}
-                                  className="text-[var(--color-green-ink)]"
-                                  aria-hidden="true"
-                                />
-                              ) : item.type === 'seller_verification_rejected' ? (
-                                <ShieldAlert
-                                  size={16}
-                                  className="text-red-700 dark:text-red-400"
-                                  aria-hidden="true"
-                                />
-                              ) : item.type === 'new_comment' ||
-                                item.type === 'comment_reply' ? (
-                                <MessageCircle
-                                  size={16}
-                                  className="text-[var(--color-green-ink)]"
-                                  aria-hidden="true"
-                                />
-                              ) : item.type === 'listing_liked' ? (
-                                <ThumbsUp
-                                  size={16}
-                                  className="text-[var(--color-gold)]"
-                                  aria-hidden="true"
-                                />
-                              ) : (
-                                <MessageSquare
-                                  size={16}
-                                  className="text-[var(--color-gold)]"
-                                  aria-hidden="true"
-                                />
-                              )}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center justify-between gap-2">
-                                <p className="text-xs font-bold text-[var(--color-ink)] truncate">
-                                  {item.title}
-                                </p>
-                                {!item.read && (
-                                  <span className="px-1.5 py-0.5 rounded bg-[var(--color-gold-soft)] text-[var(--color-ink)] text-[10px] font-bold shrink-0">
-                                    {t.newBadge}
-                                  </span>
-                                )}
-                              </div>
-                              <p className="text-xs text-[var(--color-muted)] mt-1 line-clamp-2 leading-relaxed">
-                                {item.body}
-                              </p>
-                              <p className="text-[11px] text-[var(--color-muted)]/80 mt-1 tabular-nums">
-                                {formatRelativeArabicTime(item.createdAt, undefined, lang)}
-                              </p>
-                            </div>
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
             <span className="souq-separator" aria-hidden="true" />
 
             {currentUser ? (
-              <div className="relative souq-login-wrap" ref={accountContainerRef}>
+              <>
                 <button
                   type="button"
-                  onClick={() => {
-                    dismissDesktopMenu();
-                    setSearchOpen(false);
-                    setNotifOpen(false);
-                    setLangOpen(false);
-                    setAccountOpen((prev) => !prev);
-                  }}
-                  aria-label={`${t.myAccount}: ${currentUser.name}`}
-                  aria-expanded={accountOpen}
-                  aria-haspopup="menu"
-                  title={`${currentUser.name} — ${formatRoleLabel(currentUser.role)}`}
-                  className="souq-login"
+                  className="souq-post"
+                  onClick={() => handleNav('add')}
                 >
-                  <span
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.3"
+                    strokeLinecap="round"
                     aria-hidden="true"
-                    className="w-6 h-6 rounded-full bg-[var(--nav-gold)]/20 text-[var(--nav-gold)] text-[11px] font-bold flex items-center justify-center shrink-0"
                   >
-                    {userInitial || <UserIcon size={13} />}
-                  </span>
-                  <span>{t.myAccount}</span>
-                  <ChevronDown size={13} aria-hidden="true" />
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                  {t.addListing}
                 </button>
 
-                {accountOpen && (
-                  <div
-                    role="menu"
-                    aria-label={t.myAccount}
-                    className="header-dropdown-enter absolute end-0 top-full mt-2 w-60 rounded-xl bg-[var(--nav-surface)] border border-[var(--nav-border)] shadow-[0_18px_40px_rgba(0,0,0,0.28)] p-1.5 z-50 space-y-0.5 text-[var(--nav-text)]"
+                <div className="relative" ref={notifContainerRef}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      dismissDesktopMenu();
+                      setSearchOpen(false);
+                      setAccountOpen(false);
+                      setLangOpen(false);
+                      setNotifOpen((prev) => !prev);
+                    }}
+                    aria-label={`${t.notificationsTitle}${unreadCount > 0 ? ` (${unreadCount})` : ''}`}
+                    aria-expanded={notifOpen}
+                    aria-haspopup="true"
+                    className="souq-icon-btn"
                   >
-                    <div className="px-3 py-2 border-b border-[var(--nav-border)] mb-1">
-                      <p className="text-xs font-bold truncate">{currentUser.name}</p>
-                      <p className="text-[11px] text-[var(--nav-muted)] mt-0.5">
-                        {formatRoleLabel(currentUser.role)}
-                      </p>
-                    </div>
+                    {unreadCount > 0 ? (
+                      <BellRing size={17} style={{ color: 'var(--nav-gold)' }} aria-hidden="true" />
+                    ) : (
+                      <Bell size={17} aria-hidden="true" />
+                    )}
+                    {unreadCount > 0 && (
+                      <span className="absolute -top-1.5 -end-1.5 min-w-[19px] h-[19px] px-1 rounded-full bg-[var(--nav-gold)] text-[#15251c] text-[10px] font-extrabold tabular-nums flex items-center justify-center ring-2 ring-[var(--nav-surface)]">
+                        {unreadCount > 99 ? '+99' : unreadCount}
+                      </span>
+                    )}
+                  </button>
 
-                    {accountMenuItems.map((item) => {
-                      const Icon = item.icon;
-                      const active =
-                        currentPage === 'dashboard' && activeDashboardTab === item.dashboardTab;
-                      return (
+                  {notifOpen && (
+                    <div
+                      role="region"
+                      aria-label={t.notificationsTitle}
+                      className="header-dropdown-enter fixed inset-x-3 top-[82px] w-auto sm:absolute sm:inset-x-auto sm:end-0 sm:top-full sm:mt-2 sm:w-[380px] max-w-[calc(100vw-1.5rem)] bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-[0_20px_48px_-12px_rgba(11,61,46,0.28)] overflow-hidden z-50 text-[var(--color-ink)]"
+                    >
+                      <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between gap-2">
+                        <span className="font-display text-sm sm:text-base font-extrabold text-[var(--color-ink)]">
+                          {t.notificationsTitle}
+                        </span>
+                        {unreadCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={onMarkAllNotificationsRead}
+                            className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--color-green-ink)] hover:underline cursor-pointer"
+                          >
+                            <CheckCheck size={14} aria-hidden="true" />
+                            <span>{t.markAllRead}</span>
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="max-h-[65vh] sm:max-h-[400px] overflow-y-auto divide-y divide-[var(--color-border)]/70 p-1">
+                        {notifications.length === 0 ? (
+                          <div className="p-8 text-center space-y-2">
+                            <Bell
+                              size={28}
+                              className="mx-auto text-[var(--color-muted)]/70"
+                              aria-hidden="true"
+                            />
+                            <p className="text-sm font-medium text-[var(--color-muted)]">
+                              {t.notificationsEmpty}
+                            </p>
+                          </div>
+                        ) : (
+                          notifications.slice(0, 10).map((item) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => {
+                                onOpenNotification(item);
+                                setNotifOpen(false);
+                              }}
+                              className={`w-full text-start rounded-xl p-3 transition-colors flex items-start gap-3 cursor-pointer ${
+                                item.read
+                                  ? 'bg-[var(--color-surface)] hover:bg-[var(--color-cream)]/50'
+                                  : 'bg-[var(--color-cream)]/85 hover:bg-[var(--color-cream)]'
+                              }`}
+                            >
+                              <div className="w-9 h-9 rounded-full bg-[var(--color-cream)] border border-[var(--color-border)] flex items-center justify-center mt-0.5 shrink-0">
+                                {item.type === 'offer_accepted' ||
+                                item.type === 'listing_approved' ||
+                                item.type === 'commission_approved' ? (
+                                  <CheckCircle2
+                                    size={16}
+                                    className="text-[var(--color-green-ink)]"
+                                    aria-hidden="true"
+                                  />
+                                ) : item.type === 'featured_approved' ? (
+                                  <Sparkles
+                                    size={16}
+                                    className="text-[var(--color-gold)]"
+                                    aria-hidden="true"
+                                  />
+                                ) : item.type === 'commission_due' ||
+                                  item.type === 'commission_submitted' ? (
+                                  <BadgePercent
+                                    size={16}
+                                    className="text-[var(--color-green-ink)]"
+                                    aria-hidden="true"
+                                  />
+                                ) : item.type === 'offer_rejected' ||
+                                  item.type === 'listing_rejected' ||
+                                  item.type === 'commission_rejected' ? (
+                                  <XCircle
+                                    size={16}
+                                    className="text-red-700 dark:text-red-400"
+                                    aria-hidden="true"
+                                  />
+                                ) : item.type === 'seller_verified' ? (
+                                  <ShieldCheck
+                                    size={16}
+                                    className="text-[var(--color-green-ink)]"
+                                    aria-hidden="true"
+                                  />
+                                ) : item.type === 'seller_verification_rejected' ? (
+                                  <ShieldAlert
+                                    size={16}
+                                    className="text-red-700 dark:text-red-400"
+                                    aria-hidden="true"
+                                  />
+                                ) : item.type === 'new_comment' ||
+                                  item.type === 'comment_reply' ? (
+                                  <MessageCircle
+                                    size={16}
+                                    className="text-[var(--color-green-ink)]"
+                                    aria-hidden="true"
+                                  />
+                                ) : item.type === 'listing_liked' ? (
+                                  <ThumbsUp
+                                    size={16}
+                                    className="text-[var(--color-gold)]"
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <MessageSquare
+                                    size={16}
+                                    className="text-[var(--color-gold)]"
+                                    aria-hidden="true"
+                                  />
+                                )}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-start justify-between gap-2">
+                                  <p className="text-[13px] font-bold text-[var(--color-ink)] line-clamp-1">
+                                    {item.title}
+                                  </p>
+                                  {!item.read && (
+                                    <span className="px-1.5 py-0.5 rounded bg-[var(--color-gold-soft)] text-[var(--color-ink)] text-[10px] font-bold shrink-0">
+                                      {t.newBadge}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-[var(--color-muted)] mt-0.5 line-clamp-2 leading-5">
+                                  {item.body}
+                                </p>
+                                <p className="text-[11px] text-[var(--color-muted)]/80 mt-1 tabular-nums">
+                                  {formatRelativeArabicTime(item.createdAt, undefined, lang)}
+                                </p>
+                              </div>
+                            </button>
+                          ))
+                        )}
+                      </div>
+
+                      <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)]">
                         <button
-                          key={item.key}
+                          type="button"
+                          onClick={() => handleNav('dashboard', { dashboardTab: 'notifications' })}
+                          className="w-full px-4 py-3 text-center text-xs sm:text-sm font-bold text-[var(--color-green-ink)] hover:bg-[var(--color-cream)]/60 transition-colors cursor-pointer"
+                        >
+                          {t.viewAllNotifications}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="relative souq-login-wrap" ref={accountContainerRef}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      dismissDesktopMenu();
+                      setSearchOpen(false);
+                      setNotifOpen(false);
+                      setLangOpen(false);
+                      setAccountOpen((prev) => !prev);
+                    }}
+                    aria-label={`${t.myAccount}: ${currentUser.name}`}
+                    aria-expanded={accountOpen}
+                    aria-haspopup="menu"
+                    title={`${currentUser.name} — ${formatRoleLabel(currentUser.role)}`}
+                    className="souq-login souq-avatar-trigger"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="w-full h-full flex items-center justify-center text-xs font-extrabold tracking-wide text-[var(--nav-gold)]"
+                    >
+                      {userInitials || <UserIcon size={15} />}
+                    </span>
+                    <span className="sr-only">
+                      <span>{t.myAccount}</span>
+                    </span>
+                  </button>
+
+                  {accountOpen && (
+                    <div
+                      role="menu"
+                      aria-label={t.myAccount}
+                      className="header-dropdown-enter absolute end-0 top-full mt-2 w-56 sm:w-60 rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-[0_20px_48px_-12px_rgba(11,61,46,0.28)] overflow-hidden z-50 text-[var(--color-ink)]"
+                    >
+                      <div className="px-4 py-3 border-b border-[var(--color-border)]">
+                        <p className="text-sm font-extrabold text-[var(--color-ink)] truncate">
+                          {currentUser.name}
+                        </p>
+                      </div>
+
+                      <div className="p-1.5 space-y-0.5">
+                        {accountMenuItems.map((item) => {
+                          const Icon = item.icon;
+                          const active =
+                            currentPage === 'dashboard' && activeDashboardTab === item.dashboardTab;
+                          return (
+                            <button
+                              key={item.key}
+                              type="button"
+                              role="menuitem"
+                              onClick={() =>
+                                handleNav('dashboard', { dashboardTab: item.dashboardTab })
+                              }
+                              className={`w-full text-start px-3 py-2.5 rounded-xl text-[13.5px] font-medium flex items-center gap-3 transition-colors cursor-pointer ${
+                                active
+                                  ? 'bg-[var(--color-cream)] text-[var(--color-green-ink)] font-bold'
+                                  : 'text-[var(--color-ink)] hover:bg-[var(--color-cream)]/70'
+                              }`}
+                            >
+                              <Icon
+                                size={16}
+                                className={
+                                  active
+                                    ? 'text-[var(--color-green-ink)] shrink-0'
+                                    : 'text-[var(--color-muted)] shrink-0'
+                                }
+                                aria-hidden="true"
+                              />
+                              <span className="flex-1 truncate">{item.label}</span>
+                              {typeof item.badge === 'number' && item.badge > 0 && (
+                                <span className="px-1.5 py-0.5 rounded-md bg-[var(--color-gold-soft)] text-[var(--color-ink)] text-[11px] font-bold tabular-nums shrink-0">
+                                  {item.badge}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <div className="p-1.5 border-t border-[var(--color-border)]">
+                        <button
                           type="button"
                           role="menuitem"
-                          onClick={() =>
-                            handleNav('dashboard', { dashboardTab: item.dashboardTab })
-                          }
-                          className={`w-full text-start px-3 py-2 rounded-lg text-[13px] font-medium flex items-center gap-2.5 transition-colors cursor-pointer ${
-                            active
-                              ? 'bg-[var(--nav-hover)] text-[var(--nav-gold)] font-semibold'
-                              : 'hover:bg-[var(--nav-hover)]'
-                          }`}
+                          onClick={() => {
+                            onLogout();
+                            closeAll();
+                          }}
+                          className="w-full text-start px-3 py-2.5 rounded-xl text-[13.5px] font-medium text-[var(--color-ink)] hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/30 dark:hover:text-red-400 flex items-center gap-3 transition-colors cursor-pointer"
                         >
-                          <Icon
-                            size={14}
-                            style={{ color: 'var(--nav-gold)' }}
-                            className="shrink-0"
-                            aria-hidden="true"
-                          />
-                          <span>{item.label}</span>
+                          <LogOut size={16} className="shrink-0 text-[var(--color-muted)]" aria-hidden="true" />
+                          <span>{t.menuLogout}</span>
                         </button>
-                      );
-                    })}
-
-                    <div className="pt-1 mt-1 border-t border-[var(--nav-border)]">
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          onLogout();
-                          closeAll();
-                        }}
-                        className="w-full text-start px-3 py-2 rounded-lg text-[13px] font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 flex items-center gap-2.5 transition-colors cursor-pointer"
-                      >
-                        <LogOut size={14} className="shrink-0" aria-hidden="true" />
-                        <span>{t.menuLogout}</span>
-                      </button>
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
+              </>
             ) : (
-              <div className="souq-login-wrap">
+              <>
+                <div className="souq-login-wrap">
+                  <button
+                    type="button"
+                    className="souq-login"
+                    onClick={() => handleNav('login', { authMode: 'login' })}
+                  >
+                    {t.signIn}
+                  </button>
+                </div>
+
                 <button
                   type="button"
-                  className="souq-login"
-                  onClick={() => handleNav('login', { authMode: 'login' })}
+                  className="souq-post"
+                  onClick={() => handleNav('add')}
                 >
-                  {t.signIn}
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.3"
+                    strokeLinecap="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                  {t.addListing}
                 </button>
-              </div>
+              </>
             )}
-
-            <button
-              type="button"
-              className="souq-post"
-              onClick={() => handleNav('add')}
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.3"
-                strokeLinecap="round"
-                aria-hidden="true"
-              >
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-              {t.addListing}
-            </button>
 
             <button
               type="button"
@@ -1486,19 +1549,45 @@ export function Header({
             {t.navContact}
           </button>
 
-          <div className="souq-mobile-actions">
-            {currentUser ? (
-              <button
-                type="button"
-                onClick={() =>
-                  handleNav('dashboard', {
-                    dashboardTab: hasAdminNav ? 'admin' : 'analytics',
-                  })
-                }
-              >
+          {currentUser && (
+            <div className="mt-4 pt-3 border-t border-[var(--nav-border)]">
+              <p className="px-2 pb-2 text-[11px] font-bold text-[var(--nav-muted)]">
                 {t.myAccount}
-              </button>
-            ) : (
+              </p>
+              <div className="space-y-1">
+                {accountMenuItems.map((item) => {
+                  const Icon = item.icon;
+                  const active =
+                    currentPage === 'dashboard' && activeDashboardTab === item.dashboardTab;
+                  return (
+                    <button
+                      key={`mob-${item.key}`}
+                      type="button"
+                      onClick={() =>
+                        handleNav('dashboard', { dashboardTab: item.dashboardTab })
+                      }
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold border-s-2 transition-colors cursor-pointer ${
+                        active
+                          ? 'border-[var(--nav-gold)] bg-[var(--nav-hover)] text-[var(--nav-gold)]'
+                          : 'border-transparent text-[var(--nav-text)] hover:bg-[var(--nav-hover)]'
+                      }`}
+                    >
+                      <Icon size={16} className="shrink-0" aria-hidden="true" />
+                      <span className="flex-1 text-start">{item.label}</span>
+                      {typeof item.badge === 'number' && item.badge > 0 && (
+                        <span className="px-1.5 py-0.5 rounded bg-[var(--nav-gold)]/20 text-[var(--nav-gold)] text-[11px] font-bold tabular-nums">
+                          {item.badge}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div className="souq-mobile-actions">
+            {!currentUser && (
               <button
                 type="button"
                 onClick={() => handleNav('login', { authMode: 'login' })}
@@ -1516,16 +1605,30 @@ export function Header({
           </div>
 
           {currentUser && (
-            <div className="mt-3">
+            <div className="mt-4 pt-3 border-t border-[var(--nav-border)] flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="w-10 h-10 rounded-lg bg-[var(--nav-hover)] border border-[var(--nav-border)] text-[var(--nav-gold)] text-xs font-extrabold flex items-center justify-center shrink-0">
+                  {userInitials || <UserIcon size={15} />}
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-[var(--nav-text)] truncate">
+                    {currentUser.name}
+                  </p>
+                  <span className="inline-block mt-0.5 text-[11px] font-semibold text-[var(--nav-gold)]">
+                    {t.memberBadge}
+                  </span>
+                </div>
+              </div>
               <button
                 type="button"
                 onClick={() => {
                   onLogout();
                   closeAll();
                 }}
-                className="w-full py-2.5 rounded-xl border border-red-400/30 text-red-500 text-xs font-bold cursor-pointer"
+                className="min-h-[40px] px-3 py-2 rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500/20 text-xs font-bold inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
               >
-                {t.menuLogout}
+                <LogOut size={14} aria-hidden="true" />
+                <span>{t.menuLogout}</span>
               </button>
             </div>
           )}

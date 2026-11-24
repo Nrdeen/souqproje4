@@ -639,12 +639,12 @@ export function HomeCategoriesSection({
   return (
     <section
       aria-labelledby="home-categories-heading"
-      className="bg-[var(--color-canvas)] border-b border-[var(--color-border)] py-10 sm:py-12 lg:py-14 transition-colors"
+      className="bg-[var(--color-canvas)] border-b border-[var(--color-border)] pt-5 pb-6 sm:pt-6 sm:pb-7 lg:pt-7 lg:pb-8 transition-colors"
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Centered Editorial Header with Saudi Gold Flanking Hairlines */}
         <div className="text-center max-w-2xl mx-auto">
-          <div className="flex items-center justify-center gap-3.5 max-w-xs sm:max-w-sm mx-auto mb-3.5">
+          <div className="flex items-center justify-center gap-3.5 max-w-xs sm:max-w-sm mx-auto mb-2.5">
             <span
               aria-hidden="true"
               className="flex-1 h-px bg-gradient-to-l from-[var(--color-gold)]/70 to-transparent"
@@ -664,7 +664,7 @@ export function HomeCategoriesSection({
           >
             {isEn ? 'Browse Marketplace by Category & Purpose' : 'تصفح السوق حسب التصنيف والغرض'}
           </h2>
-          <p className="mt-2 text-xs sm:text-sm lg:text-[15px] text-[var(--color-muted)] leading-relaxed">
+          <p className="mt-1.5 text-xs sm:text-sm lg:text-[15px] text-[var(--color-muted)] leading-relaxed">
             {isEn
               ? 'Select livestock type, pure breed, or buying purpose to jump straight to matching listings'
               : 'اختر نوع الماشية أو السلالة أو الغرض من الشراء للوصول مباشرة إلى الإعلانات المناسبة'}
@@ -672,7 +672,7 @@ export function HomeCategoriesSection({
 
           {/* Interactive Filter Mode Tabs */}
           {availableTabs.length > 1 && (
-            <div className="mt-5 flex justify-center">
+            <div className="mt-3.5 flex justify-center">
               <div
                 role="tablist"
                 aria-label={isEn ? 'Category display filter' : 'تصنيف عرض الفئات'}
@@ -708,7 +708,7 @@ export function HomeCategoriesSection({
         {/* Dynamic Responsive Category Grid with Tactile Card & Medallion Hover Choreography */}
         <div
           onMouseLeave={() => setHoveredId(null)}
-          className="mt-8 sm:mt-10 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-[repeat(auto-fit,minmax(152px,1fr))] max-w-6xl mx-auto gap-x-3 gap-y-5 sm:gap-x-5 sm:gap-y-6 lg:gap-4"
+          className="mt-6 sm:mt-7 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-[repeat(auto-fit,minmax(152px,1fr))] max-w-6xl mx-auto gap-x-3 gap-y-3.5 sm:gap-x-4 sm:gap-y-4 lg:gap-3.5"
         >
           {visibleMedallions.map((item) => {
             const isActive = activeSpotlightId === item.id;
@@ -722,14 +722,14 @@ export function HomeCategoriesSection({
                 onMouseEnter={() => setHoveredId(item.id)}
                 onFocus={() => setHoveredId(item.id)}
                 onBlur={() => setHoveredId((prev) => (prev === item.id ? null : prev))}
-                className="group relative w-full flex flex-col items-center text-center rounded-2xl px-2.5 py-4 sm:px-3.5 sm:py-5 bg-[var(--color-surface)]/75 dark:bg-[var(--color-surface)]/40 border border-[var(--color-border)]/70 shadow-[0_6px_18px_-14px_rgba(16,60,44,0.14)] dark:shadow-[0_6px_18px_-12px_rgba(0,0,0,0.45)] hover:border-[var(--color-gold)]/55 hover:bg-[var(--color-surface)] dark:hover:bg-[var(--color-surface)]/70 hover:shadow-[0_18px_40px_-14px_rgba(16,60,44,0.22)] dark:hover:shadow-[0_20px_40px_-12px_rgba(0,0,0,0.65)] hover:-translate-y-1.5 hover:scale-[1.02] active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)] cursor-pointer transition-[transform,background-color,border-color,box-shadow] duration-250 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none motion-reduce:transform-none"
+                className="group relative w-full flex flex-col items-center text-center rounded-2xl px-2.5 py-3 sm:px-3 sm:py-3.5 bg-[var(--color-surface)]/80 dark:bg-[var(--color-surface)]/45 border border-[var(--color-border)]/70 shadow-[0_6px_18px_-14px_rgba(16,60,44,0.14)] dark:shadow-[0_6px_18px_-12px_rgba(0,0,0,0.45)] hover:border-[var(--color-gold)]/55 hover:bg-[var(--color-surface)] dark:hover:bg-[var(--color-surface)]/70 hover:shadow-[0_18px_40px_-14px_rgba(16,60,44,0.22)] dark:hover:shadow-[0_20px_40px_-12px_rgba(0,0,0,0.65)] hover:-translate-y-1.5 hover:scale-[1.02] active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)] cursor-pointer transition-[transform,background-color,border-color,box-shadow] duration-250 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none motion-reduce:transform-none"
               >
                 {/* Medallion Wrapper with Ambient Radial Aura & Sweeping Gold Crescent */}
                 <span className="relative flex items-center justify-center">
                   {/* Soft Radial Emerald/Gold Ambient Aura Revealed Smoothly on Active/Hover */}
                   <span
                     aria-hidden="true"
-                    className={`absolute -inset-2.5 rounded-full bg-[radial-gradient(circle,rgba(199,154,67,0.22)_0%,rgba(16,60,44,0.12)_52%,transparent_72%)] dark:bg-[radial-gradient(circle,rgba(224,168,75,0.22)_0%,rgba(20,92,66,0.18)_52%,transparent_72%)] pointer-events-none transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none ${
+                    className={`absolute -inset-2 rounded-full bg-[radial-gradient(circle,rgba(199,154,67,0.22)_0%,rgba(16,60,44,0.12)_52%,transparent_72%)] dark:bg-[radial-gradient(circle,rgba(224,168,75,0.22)_0%,rgba(20,92,66,0.18)_52%,transparent_72%)] pointer-events-none transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none ${
                       isHovered
                         ? 'opacity-100 scale-105'
                         : isActive
@@ -739,13 +739,13 @@ export function HomeCategoriesSection({
                   />
 
                   <span
-                    className={`relative w-[104px] h-[104px] min-[390px]:w-[114px] min-[390px]:h-[114px] sm:w-[126px] sm:h-[126px] xl:w-[134px] xl:h-[134px] rounded-full flex items-center justify-center transition-[transform,background-color,color,box-shadow,border-color] duration-250 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none motion-reduce:transform-none group-focus-visible:ring-2 group-focus-visible:ring-[var(--color-gold)] group-focus-visible:ring-offset-4 group-focus-visible:ring-offset-[var(--color-canvas)] ${
+                    className={`relative w-[90px] h-[90px] min-[390px]:w-[96px] min-[390px]:h-[96px] sm:w-[104px] sm:h-[104px] xl:w-[106px] xl:h-[106px] rounded-full flex items-center justify-center transition-[transform,background-color,color,box-shadow,border-color] duration-250 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none motion-reduce:transform-none group-focus-visible:ring-2 group-focus-visible:ring-[var(--color-gold)] group-focus-visible:ring-offset-4 group-focus-visible:ring-offset-[var(--color-canvas)] ${
                       isActive
-                        ? 'bg-[var(--color-green)] text-white -translate-y-1.5 scale-[1.03] shadow-[0_16px_34px_-10px_rgba(16,60,44,0.42)] dark:shadow-[0_16px_34px_-10px_rgba(0,0,0,0.7)]'
-                        : 'bg-[var(--color-surface)] text-[var(--color-green-ink)] border border-[var(--color-border)]/95 shadow-[0_10px_26px_-14px_rgba(16,60,44,0.18)] dark:shadow-[0_10px_24px_-12px_rgba(0,0,0,0.48)] group-hover:-translate-y-1.5 group-hover:scale-[1.03]'
+                        ? 'bg-[var(--color-green)] text-white border border-[var(--color-gold)]/75 -translate-y-1 scale-[1.02] shadow-[0_14px_28px_-10px_rgba(16,60,44,0.42)] dark:shadow-[0_14px_28px_-10px_rgba(0,0,0,0.7)]'
+                        : 'bg-[var(--color-surface)] text-[var(--color-green-ink)] border border-[var(--color-border)]/95 shadow-[0_8px_20px_-12px_rgba(16,60,44,0.18)] dark:shadow-[0_8px_20px_-10px_rgba(0,0,0,0.48)] group-hover:-translate-y-1 group-hover:scale-[1.02]'
                     }`}
                   >
-                    {/* Signature Saudi Gold Crescent Arc Overlay (Sweeps Smoothly on Hover) */}
+                    {/* Signature Saudi Gold Crescent Arc & Outer Gold Ring */}
                     <svg
                       viewBox="0 0 144 144"
                       fill="none"
@@ -759,19 +759,19 @@ export function HomeCategoriesSection({
                         cy="72"
                         r="68"
                         stroke="var(--color-gold)"
-                        strokeWidth="1"
-                        opacity={isActive ? 0.36 : 0.16}
+                        strokeWidth={isActive ? 2.2 : 1.15}
+                        opacity={isActive ? 0.92 : 0.24}
                       />
                       <circle
                         cx="72"
                         cy="72"
                         r="68"
                         stroke="var(--color-gold)"
-                        strokeWidth={isActive ? 2.8 : 2}
+                        strokeWidth={isActive ? 3.1 : 2.1}
                         strokeLinecap="round"
                         strokeDasharray="136 428"
                         transform="rotate(-98 72 72)"
-                        opacity={isActive ? 1 : 0.72}
+                        opacity={isActive ? 1 : 0.78}
                         className="transition-opacity duration-200"
                       />
                     </svg>
@@ -779,16 +779,16 @@ export function HomeCategoriesSection({
                     {/* Delicate Inner Concentric Hairline */}
                     <span
                       aria-hidden="true"
-                      className={`absolute inset-[7px] rounded-full pointer-events-none transition-colors duration-200 ${
+                      className={`absolute inset-[6px] rounded-full pointer-events-none transition-colors duration-200 ${
                         isActive
-                          ? 'border border-white/22'
+                          ? 'border border-[var(--color-gold)]/35'
                           : 'border border-[var(--color-cream)] dark:border-white/[0.06] group-hover:border-[var(--color-gold)]/35'
                       }`}
                     />
 
                     <MedallionLivestockIcon
                       kind={item.kind}
-                      className={`relative z-[1] w-14 h-14 sm:w-16 sm:h-16 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none ${
+                      className={`relative z-[1] w-10 h-10 sm:w-11 sm:h-11 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none ${
                         isHovered ? 'scale-110' : 'group-hover:scale-110'
                       }`}
                     />
@@ -796,7 +796,7 @@ export function HomeCategoriesSection({
                 </span>
 
                 {/* Medallion Label, Subtle Descriptor, Expanding Gold Rule & Directional Cue */}
-                <span className="mt-4 block font-display text-[15px] sm:text-base font-extrabold text-[var(--color-ink)] leading-snug group-hover:text-[var(--color-green-ink)] transition-colors duration-200">
+                <span className="mt-2.5 sm:mt-3 block font-display text-sm sm:text-[15px] font-extrabold text-[var(--color-ink)] leading-snug group-hover:text-[var(--color-green-ink)] transition-colors duration-200">
                   {item.name}
                 </span>
 
@@ -806,16 +806,16 @@ export function HomeCategoriesSection({
 
                 <span
                   aria-hidden="true"
-                  className={`mt-2 block h-px transition-[width,background-color] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                  className={`mt-1.5 block h-px transition-[width,background-color] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
                     isHovered
-                      ? 'w-12 bg-[var(--color-gold)]'
+                      ? 'w-11 bg-[var(--color-gold)]'
                       : isActive
-                      ? 'w-10 bg-[var(--color-gold)]'
-                      : 'w-6 bg-[var(--color-gold)]/45 group-hover:w-12 group-hover:bg-[var(--color-gold)]'
+                      ? 'w-9 bg-[var(--color-gold)]'
+                      : 'w-6 bg-[var(--color-gold)]/45 group-hover:w-11 group-hover:bg-[var(--color-gold)]'
                   }`}
                 />
 
-                <span className="relative mt-1.5 inline-flex items-center justify-center text-xs font-bold tabular-nums text-[var(--color-green-ink)] group-hover:text-[var(--color-gold-hover)] dark:group-hover:text-[var(--color-gold)] transition-colors duration-200">
+                <span className="relative mt-1 inline-flex items-center justify-center text-xs font-bold tabular-nums text-[var(--color-green-ink)] group-hover:text-[var(--color-gold-hover)] dark:group-hover:text-[var(--color-gold)] transition-colors duration-200">
                   <span>{formatArabicListingCount(item.count, lang)}</span>
                   <DirArrow
                     size={12}
@@ -835,11 +835,11 @@ export function HomeCategoriesSection({
         </div>
 
         {/* Centered Browse-All Action */}
-        <div className="mt-8 sm:mt-10 flex justify-center">
+        <div className="mt-5 sm:mt-6 flex justify-center">
           <button
             type="button"
             onClick={onBrowseAll}
-            className="min-h-[42px] px-5 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-warm)] text-xs sm:text-sm font-bold text-[var(--color-ink)] inline-flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-gold)] shadow-2xs"
+            className="min-h-[40px] px-5 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-warm)] text-xs sm:text-sm font-bold text-[var(--color-ink)] inline-flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-gold)] shadow-2xs"
           >
             <span>{isEn ? 'Browse All Categories' : 'استعراض جميع التصنيفات'}</span>
             <DirArrow size={15} aria-hidden="true" />

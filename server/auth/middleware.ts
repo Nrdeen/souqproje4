@@ -26,6 +26,7 @@ const CSRF_TOKEN_EXEMPT = new Set([
   '/auth/register',
   '/auth/google',
   '/auth/google/link-with-password',
+  '/auth/facebook/link-with-password',
 ]);
 
 export function createAuthMiddleware(deps: AuthDeps) {
@@ -109,14 +110,14 @@ export function createAuthMiddleware(deps: AuthDeps) {
           "script-src 'self' https://accounts.google.com/gsi/client",
           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style",
           "font-src 'self' https://fonts.gstatic.com data:",
-          "img-src 'self' data: blob: https://lh3.googleusercontent.com https://*.googleusercontent.com",
+          "img-src 'self' data: blob: https://lh3.googleusercontent.com https://*.googleusercontent.com https://*.fbcdn.net https://graph.facebook.com https://platform-lookaside.fbsbx.com",
           "media-src 'self' blob:",
           "connect-src 'self' ws: wss: https://accounts.google.com/gsi/",
           "frame-src 'self' https://accounts.google.com/gsi/",
           "object-src 'none'",
           "base-uri 'self'",
           "frame-ancestors 'none'",
-          "form-action 'self' https://accounts.google.com",
+          "form-action 'self' https://accounts.google.com https://www.facebook.com",
         ].join('; ')
       );
     }

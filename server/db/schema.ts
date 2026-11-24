@@ -74,7 +74,7 @@ export const googleIdentities = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
   (table) => [
-    check('google_identities_provider_chk', sql`${table.provider} = 'google'`),
+    check('google_identities_provider_chk', sql`${table.provider} IN ('google', 'facebook')`),
     uniqueIndex('google_identities_provider_subject_uidx').on(table.provider, table.subject),
     uniqueIndex('google_identities_user_provider_uidx').on(table.userId, table.provider),
     index('google_identities_email_lower_idx').on(sql`lower(${table.email})`),

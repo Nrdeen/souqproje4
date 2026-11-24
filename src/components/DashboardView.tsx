@@ -5,6 +5,7 @@ import {
   Bell,
   Building2,
   Check,
+  CheckCheck,
   CheckCircle2,
   Clock,
   Copy,
@@ -24,6 +25,7 @@ import {
   Plus,
   Search,
   Send,
+  Settings,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
@@ -45,6 +47,7 @@ import type {
   Breed,
   Category,
   Conversation,
+  FacebookAuthConfig,
   GoogleAuthConfig,
   Listing,
   PriceOffer,
@@ -55,6 +58,7 @@ import type {
 } from '../types/marketplace';
 import { api } from '../lib/api';
 import { normalizeSaudiMobileClient } from '../lib/auth-validation';
+import { openFacebookOAuthPopup } from '../lib/facebook-auth';
 import {
   promptGoogleOneTap,
   renderGoogleOfficialButton,
@@ -76,7 +80,17 @@ const AdminDashboardPanel = lazy(() =>
   import('./AdminDashboardPanel').then((m) => ({ default: m.AdminDashboardPanel })),
 );
 
-export type DashboardTab = 'my-listings' | 'profile' | 'favorites' | 'likes' | 'messages' | 'analytics' | 'admin';
+export type DashboardTab =
+  | 'my-listings'
+  | 'profile'
+  | 'favorites'
+  | 'likes'
+  | 'messages'
+  | 'subscription'
+  | 'settings'
+  | 'notifications'
+  | 'analytics'
+  | 'admin';
 
 interface DashboardViewProps {
   requestedTab?: DashboardTab | null;
@@ -88,6 +102,7 @@ interface DashboardViewProps {
   ) => void;
   currentUser: User;
   googleAuth?: GoogleAuthConfig;
+  facebookAuth?: FacebookAuthConfig;
   allListings: Listing[];
   categories: Category[];
   breeds: Breed[];
@@ -102,6 +117,7 @@ interface DashboardViewProps {
   onSelectListing: (listing: Listing) => void;
   onSelectSeller?: (sellerId: string) => void;
   onBrowseListings?: () => void;
+  onOpenPricing?: () => void;
   onAddListing?: () => void;
   onGoHome?: () => void;
   onEditListing: (listing: Listing) => void;
@@ -199,6 +215,9 @@ function DashboardShellIcon({ id }: { id: DashboardTab }) {
   if (id === 'favorites') return <Heart {...props} />;
   if (id === 'likes') return <ThumbsUp {...props} />;
   if (id === 'messages') return <MessageSquare {...props} />;
+  if (id === 'subscription') return <CreditCard {...props} />;
+  if (id === 'settings') return <Settings {...props} />;
+  if (id === 'notifications') return <Bell {...props} />;
   if (id === 'analytics') return <BarChart3 {...props} />;
   if (id === 'admin') return <ShieldCheck {...props} />;
   return <PackageOpen {...props} />;
@@ -211,6 +230,7 @@ export function DashboardView({
   onTabChange,
   currentUser,
   googleAuth,
+  facebookAuth,
   allListings,
   categories,
   breeds,
@@ -225,6 +245,7 @@ export function DashboardView({
   onSelectListing,
   onSelectSeller,
   onBrowseListings,
+  onOpenPricing,
   onAddListing,
   onGoHome,
   onEditListing,
@@ -286,9 +307,6 @@ export function DashboardView({
 
   const [completionPhone, setCompletionPhone] = useState('');
   const [completionName, setCompletionName] = useState(currentUser.name);
-  const [completionRole, setCompletionRole] = useState<'buyer' | 'seller'>(
-    currentUser.role === 'seller' ? 'seller' : 'buyer'
-  );
   const [completionBusy, setCompletionBusy] = useState(false);
   const [completionError, setCompletionError] = useState('');
 
@@ -298,6 +316,17 @@ export function DashboardView({
   const [linkGoogleError, setLinkGoogleError] = useState('');
   const [showLinkGisButton, setShowLinkGisButton] = useState(false);
   const linkGisContainerRef = useRef<HTMLDivElement | null>(null);
+
+  // Account Settings & Facebook linking state
+  const [settingsName, setSettingsName] = useState(currentUser.name);
+  const [settingsPhone, setSettingsPhone] = useState(currentUser.phone || '');
+  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [settingsError, setSettingsError] = useState('');
+  const [fbLinkPassword, setFbLinkPassword] = useState('');
+  const [fbLinkBusy, setFbLinkBusy] = useState(false);
+  const [fbLinkError, setFbLinkError] = useState('');
+  const [logoutAllBusy, setLogoutAllBusy] = useState(false);
+  const [notifFilter, setNotifFilter] = useState<'all' | 'unread'>('all');
 
   const [markSoldListing, setMarkSoldListing] = useState<Listing | null>(null);
   const [featuringListingId, setFeaturingListingId] = useState<string | null>(null);
@@ -440,8 +469,9 @@ export function DashboardView({
 
   useEffect(() => {
     setCompletionName(currentUser.name);
-    setCompletionRole(currentUser.role === 'seller' ? 'seller' : 'buyer');
-  }, [currentUser.name, currentUser.role]);
+    setSettingsName(currentUser.name);
+    setSettingsPhone(currentUser.phone || '');
+  }, [currentUser.name, currentUser.phone]);
 
   const submitGoogleLinkCredential = useCallback(
     async (credential: string) => {
@@ -511,7 +541,6 @@ export function DashboardView({
       await api.completeProfile({
         phone: normalized,
         name: trimmedName,
-        ...(currentUser.role !== 'admin' ? { role: completionRole } : {}),
       });
       setCompletionPhone('');
       onNotify?.('تم إكمال بيانات الحساب وحفظ رقم الجوال بنجاح');
@@ -547,6 +576,84 @@ export function DashboardView({
       setLinkGoogleError(err?.message || 'تعذر بدء ربط حساب Google');
     } finally {
       setLinkGoogleBusy(false);
+    }
+  };
+
+  const handleSaveAccountSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (settingsBusy) return;
+    setSettingsError('');
+    const normalizedPhone = normalizeSaudiMobileClient(settingsPhone);
+    if (!normalizedPhone) {
+      setSettingsError('أدخل رقم جوال سعودي صحيح بصيغة 05XXXXXXXX');
+      return;
+    }
+    const cleanName = settingsName.trim();
+    if (cleanName.length < 2 || cleanName.length > 80) {
+      setSettingsError('يجب أن يكون الاسم بين حرفين و 80 حرفاً');
+      return;
+    }
+    setSettingsBusy(true);
+    try {
+      await api.completeProfile({
+        phone: normalizedPhone,
+        name: cleanName,
+      });
+      onNotify?.('تم تحديث إعدادات الحساب بنجاح');
+      await onRefreshData?.();
+    } catch (err: any) {
+      setSettingsError(err?.message || 'تعذر تحديث بيانات الحساب');
+    } finally {
+      setSettingsBusy(false);
+    }
+  };
+
+  const handleStartAuthenticatedFacebookLink = async () => {
+    if (!facebookAuth?.enabled || fbLinkBusy) return;
+    setFbLinkError('');
+    if (currentUser.hasPassword !== false && !fbLinkPassword) {
+      setFbLinkError('أدخل كلمة المرور الحالية أولاً لإثبات ملكية الحساب قبل ربط Facebook');
+      return;
+    }
+    setFbLinkBusy(true);
+    try {
+      const { url } = await api.getFacebookOAuthUrl({ intent: 'link' });
+      const popupResult = await openFacebookOAuthPopup(url);
+      if (!popupResult.ok) {
+        if (popupResult.code !== 'facebook_canceled') {
+          setFbLinkError(popupResult.error);
+        }
+        return;
+      }
+      if (popupResult.intent !== 'link') {
+        setFbLinkError('تعذر التحقق من رمز ربط Facebook');
+        return;
+      }
+      await api.linkFacebookIdentity({
+        linkToken: popupResult.linkToken,
+        ...(currentUser.hasPassword !== false ? { password: fbLinkPassword } : {}),
+      });
+      setFbLinkPassword('');
+      onNotify?.('تم ربط حسابك بـ Facebook بنجاح');
+      await onRefreshData?.();
+    } catch (err: any) {
+      setFbLinkError(err?.message || 'تعذر ربط الحساب بـ Facebook');
+    } finally {
+      setFbLinkBusy(false);
+    }
+  };
+
+  const handleLogoutAllDevices = async () => {
+    if (logoutAllBusy) return;
+    setLogoutAllBusy(true);
+    try {
+      await api.logoutAll();
+      onNotify?.('تم تسجيل الخروج من جميع الأجهزة بنجاح');
+      await onLogout();
+    } catch (err: any) {
+      onNotify?.(err?.message || 'تعذر إنهاء الجلسات الأخرى');
+    } finally {
+      setLogoutAllBusy(false);
     }
   };
 
@@ -724,19 +831,24 @@ export function DashboardView({
   const roleLabel =
     currentUser.role === 'admin'
       ? 'مشرف المنصة'
-      : currentUser.role === 'seller'
-      ? 'بائع / مربي'
-      : 'حساب مشتري';
+      : 'عضو سوق الغنم';
 
   const shellItems: Array<{ id: DashboardTab; label: string; meta?: string }> = [
-    { id: 'my-listings', label: 'إعلاناتي', meta: String(myListings.length) },
     { id: 'profile', label: t.menuProfile },
+    { id: 'my-listings', label: 'إعلاناتي', meta: String(myListings.length) },
     { id: 'favorites', label: 'المفضلة', meta: String(favoriteListings.length) },
     { id: 'likes', label: 'إعجاباتي', meta: String(likedListings.length) },
     {
       id: 'messages',
       label: 'المحادثات',
       meta: totalUnreadMessages > 0 ? String(totalUnreadMessages) : undefined,
+    },
+    { id: 'subscription', label: t.menuSubscription },
+    { id: 'settings', label: t.menuSettings },
+    {
+      id: 'notifications',
+      label: t.menuNotifications,
+      meta: unreadNotificationsCount > 0 ? String(unreadNotificationsCount) : undefined,
     },
     {
       id: 'analytics',
@@ -980,27 +1092,6 @@ export function DashboardView({
                 />
               </div>
 
-              {currentUser.role !== 'admin' && (
-                <div>
-                  <label
-                    htmlFor="dash-complete-role"
-                    className="block text-xs font-semibold text-[var(--color-ink)] mb-1"
-                  >
-                    نوع النشاط
-                  </label>
-                  <select
-                    id="dash-complete-role"
-                    value={completionRole}
-                    onChange={(e) =>
-                      setCompletionRole(e.target.value === 'seller' ? 'seller' : 'buyer')
-                    }
-                    className="w-full h-11 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-ink)] focus:outline-none focus:border-[var(--color-green-ink)]"
-                  >
-                    <option value="buyer">مشتري</option>
-                    <option value="seller">بائع / مربي</option>
-                  </select>
-                </div>
-              )}
             </div>
 
             <div className="flex justify-end">
@@ -1219,17 +1310,19 @@ export function DashboardView({
             <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 space-y-1">
               <dt className="text-xs text-[var(--color-muted)]">{t.profileRoleLabel}</dt>
               <dd className="text-sm font-bold text-[var(--color-green-ink)]">
-                {currentUser.role === 'admin'
-                  ? t.roleAdmin
-                  : currentUser.role === 'seller'
-                  ? t.roleSeller
-                  : t.roleBuyer}
+                {currentUser.role === 'admin' ? t.roleAdmin : t.memberBadge}
               </dd>
             </div>
             <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 space-y-1">
               <dt className="text-xs text-[var(--color-muted)]">{t.profileGoogleLabel}</dt>
               <dd className="text-sm font-bold text-[var(--color-ink)]">
                 {currentUser.googleLinked ? t.profileConnected : t.profileNotConnected}
+              </dd>
+            </div>
+            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 space-y-1">
+              <dt className="text-xs text-[var(--color-muted)]">الربط بحساب Facebook</dt>
+              <dd className="text-sm font-bold text-[var(--color-ink)]">
+                {currentUser.facebookLinked ? 'مرتبط بحساب Facebook' : t.profileNotConnected}
               </dd>
             </div>
             <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 space-y-1">
@@ -1248,10 +1341,463 @@ export function DashboardView({
         </div>
       )}
 
+      {/* Subscription & Plan Overview Tab */}
+      {activeTab === 'subscription' && (
+        <div className="space-y-6">
+          <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-5 sm:p-7 space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[var(--color-border)]">
+              <div className="flex items-center gap-3">
+                <span className="w-11 h-11 rounded-xl bg-[var(--color-cream)] border border-[var(--color-border)] text-[var(--color-green-ink)] flex items-center justify-center shrink-0">
+                  <CreditCard size={20} aria-hidden="true" />
+                </span>
+                <div>
+                  <h2 className="font-display text-lg font-extrabold text-[var(--color-ink)]">
+                    باقتي واشتراكي
+                  </h2>
+                  <p className="text-xs text-[var(--color-muted)] mt-0.5">
+                    ملخص خطة العضوية الحالية وامتيازات النشر والتوثيق في سوق الغنم 2.0
+                  </p>
+                </div>
+              </div>
+              <span className="px-3 py-1 rounded-lg bg-[var(--color-green)]/10 text-[var(--color-green-ink)] text-xs font-extrabold">
+                {myVerification?.verificationStatus === 'Verified'
+                  ? 'باقة المربي الموثق'
+                  : 'العضوية المجانية النشطة'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 space-y-1">
+                <p className="text-xs text-[var(--color-muted)]">الإعلانات المسجلة</p>
+                <p className="text-xl font-extrabold text-[var(--color-ink)] tabular-nums">
+                  {myListings.length}
+                </p>
+                <p className="text-[11px] text-[var(--color-muted)]">النشر متاح مجاناً للمربين</p>
+              </div>
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 space-y-1">
+                <p className="text-xs text-[var(--color-muted)]">الإعلانات المميزة</p>
+                <p className="text-xl font-extrabold text-[var(--color-gold)] tabular-nums">
+                  {myListings.filter((l) => l.isFeatured).length}
+                </p>
+                <p className="text-[11px] text-[var(--color-muted)]">أولوية ظهور في الرئيسية والدليل</p>
+              </div>
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 space-y-1">
+                <p className="text-xs text-[var(--color-muted)]">عمولة السوق للمبيعات</p>
+                <p className="text-xl font-extrabold text-[var(--color-green-ink)] tabular-nums">
+                  {commissionEligibility?.isExempt
+                    ? '0% (إعفاء نشط)'
+                    : `${commissionEligibility?.effectiveRatePercent ?? 1}%`}
+                </p>
+                <p className="text-[11px] text-[var(--color-muted)]">
+                  {commissionEligibility?.reasonLabel || 'تُدفع بعد إتمام البيع بنجاح'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              {onOpenPricing && (
+                <button
+                  type="button"
+                  onClick={onOpenPricing}
+                  className="min-h-[44px] px-5 py-2 rounded-xl bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs sm:text-sm font-bold inline-flex items-center gap-2 cursor-pointer transition-colors"
+                >
+                  <Sparkles size={16} aria-hidden="true" />
+                  <span>استعراض الباقات والترقية</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => handleSelectTab('my-listings')}
+                className="min-h-[44px] px-4 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-cream)] hover:bg-[var(--color-cream-hover)] text-[var(--color-ink)] text-xs sm:text-sm font-semibold cursor-pointer transition-colors"
+              >
+                تمييز إعلان من إعلاناتي
+              </button>
+            </div>
+          </div>
+
+          {myCommissionRecords.length > 0 && (
+            <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-5 sm:p-6 space-y-4">
+              <h3 className="font-display text-base font-bold text-[var(--color-ink)]">
+                سجل الحوالات والعمولات والتمييز ({myCommissionRecords.length})
+              </h3>
+              <div className="divide-y divide-[var(--color-border)]">
+                {myCommissionRecords.map((rec) => {
+                  const meta = getCommissionStatusMeta(rec.status);
+                  return (
+                    <div
+                      key={rec.id}
+                      className="py-3 flex flex-wrap items-center justify-between gap-3 text-xs sm:text-sm"
+                    >
+                      <div className="space-y-0.5 min-w-0">
+                        <p className="font-bold text-[var(--color-ink)] truncate">
+                          {rec.listingTitle}
+                        </p>
+                        <p className="text-xs text-[var(--color-muted)] tabular-nums">
+                          المبلغ المستحق: {formatPriceSar(rec.commissionAmountSar)} · الحالة: {meta.label}
+                        </p>
+                      </div>
+                      {rec.status === 'pending_payment' && (
+                        <button
+                          type="button"
+                          onClick={() => openTransferModal(rec)}
+                          className="min-h-[38px] px-3.5 py-1.5 rounded-lg bg-[var(--color-green)] text-white text-xs font-bold cursor-pointer"
+                        >
+                          تأكيد الحوالة
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Account Settings Tab */}
+      {activeTab === 'settings' && (
+        <div className="space-y-6">
+          <form
+            onSubmit={handleSaveAccountSettings}
+            className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-5 sm:p-7 space-y-5"
+            noValidate
+          >
+            <div className="flex items-center gap-3 pb-4 border-b border-[var(--color-border)]">
+              <span className="w-11 h-11 rounded-xl bg-[var(--color-cream)] border border-[var(--color-border)] text-[var(--color-green-ink)] flex items-center justify-center shrink-0">
+                <Settings size={20} aria-hidden="true" />
+              </span>
+              <div>
+                <h2 className="font-display text-lg font-extrabold text-[var(--color-ink)]">
+                  إعدادات الحساب والبيانات الشخصية
+                </h2>
+                <p className="text-xs text-[var(--color-muted)] mt-0.5">
+                  حدّث الاسم المعروض ورقم الجوال السعودي ونوع نشاطك في المنصة.
+                </p>
+              </div>
+            </div>
+
+            {settingsError && (
+              <p
+                role="alert"
+                className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-xs text-red-700 dark:text-red-300"
+              >
+                {settingsError}
+              </p>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div>
+                <label
+                  htmlFor="settings-name"
+                  className="block text-xs font-semibold text-[var(--color-ink)] mb-1.5"
+                >
+                  الاسم الكامل
+                </label>
+                <input
+                  id="settings-name"
+                  type="text"
+                  value={settingsName}
+                  onChange={(e) => setSettingsName(e.target.value)}
+                  required
+                  className="w-full h-11 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] text-sm text-[var(--color-ink)] focus:outline-none focus:border-[var(--color-green-ink)]"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="settings-phone"
+                  className="block text-xs font-semibold text-[var(--color-ink)] mb-1.5"
+                >
+                  رقم الجوال السعودي
+                </label>
+                <input
+                  id="settings-phone"
+                  type="tel"
+                  dir="ltr"
+                  placeholder="05XXXXXXXX"
+                  value={settingsPhone}
+                  onChange={(e) => setSettingsPhone(e.target.value)}
+                  required
+                  className="w-full h-11 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] text-sm text-[var(--color-ink)] text-right tabular-nums focus:outline-none focus:border-[var(--color-green-ink)]"
+                />
+              </div>
+
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={settingsBusy}
+                className="min-h-[44px] px-5 py-2 rounded-xl bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] disabled:opacity-60 text-white text-xs sm:text-sm font-bold inline-flex items-center gap-2 cursor-pointer transition-colors"
+              >
+                {settingsBusy && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
+                <span>{settingsBusy ? 'جاري الحفظ...' : 'حفظ التغييرات'}</span>
+              </button>
+            </div>
+          </form>
+
+          {/* Connected Social Accounts */}
+          <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-5 sm:p-7 space-y-4">
+            <div>
+              <h3 className="font-display text-base font-extrabold text-[var(--color-ink)]">
+                الحسابات الاجتماعية المرتبطة
+              </h3>
+              <p className="text-xs text-[var(--color-muted)] mt-0.5">
+                اربط حسابك بـ Google أو Facebook للدخول السريع مع حماية ملكية الحساب.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Google Link Card */}
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-bold text-[var(--color-ink)]">Google</span>
+                  <span
+                    className={`text-xs font-bold ${
+                      currentUser.googleLinked
+                        ? 'text-[var(--color-green-ink)]'
+                        : 'text-[var(--color-muted)]'
+                    }`}
+                  >
+                    {currentUser.googleLinked ? 'مرتبط' : 'غير مرتبط'}
+                  </span>
+                </div>
+                {!currentUser.googleLinked && googleAuth?.enabled && googleAuth.clientId && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLinkGoogleOpen(true);
+                      setLinkGoogleError('');
+                      if (typeof window !== 'undefined') {
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                      }
+                    }}
+                    className="min-h-[40px] w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-green-ink)] text-xs font-bold text-[var(--color-ink)] cursor-pointer transition-colors"
+                  >
+                    ربط حساب Google الآن
+                  </button>
+                )}
+              </div>
+
+              {/* Facebook Link Card */}
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-bold text-[var(--color-ink)]">Facebook</span>
+                  <span
+                    className={`text-xs font-bold ${
+                      currentUser.facebookLinked
+                        ? 'text-[var(--color-green-ink)]'
+                        : 'text-[var(--color-muted)]'
+                    }`}
+                  >
+                    {currentUser.facebookLinked ? 'مرتبط' : 'غير مرتبط'}
+                  </span>
+                </div>
+                {!currentUser.facebookLinked && (
+                  <div className="space-y-2">
+                    {fbLinkError && (
+                      <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+                        {fbLinkError}
+                      </p>
+                    )}
+                    {facebookAuth?.enabled ? (
+                      <>
+                        {currentUser.hasPassword !== false && (
+                          <input
+                            type="password"
+                            value={fbLinkPassword}
+                            onChange={(e) => setFbLinkPassword(e.target.value)}
+                            placeholder="كلمة المرور الحالية للتحقق"
+                            aria-label="كلمة المرور الحالية لربط Facebook"
+                            className="w-full h-10 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-ink)] focus:outline-none focus:border-[var(--color-green-ink)]"
+                          />
+                        )}
+                        <button
+                          type="button"
+                          disabled={fbLinkBusy}
+                          onClick={handleStartAuthenticatedFacebookLink}
+                          className="min-h-[40px] w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-green-ink)] text-xs font-bold text-[var(--color-ink)] cursor-pointer transition-colors disabled:opacity-60"
+                        >
+                          {fbLinkBusy ? 'جاري التحقق من Facebook...' : 'ربط حساب Facebook الآن'}
+                        </button>
+                      </>
+                    ) : (
+                      <p className="text-[11px] text-[var(--color-muted)]">
+                        يتاح الربط عند تفعيل إعدادات Facebook في الخادم.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Session Security */}
+          <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-5 sm:p-6 flex flex-wrap items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-sm font-bold text-[var(--color-ink)]">
+                <Lock size={15} className="text-[var(--color-green-ink)]" aria-hidden="true" />
+                <span>أمان الجلسات النشطة</span>
+              </div>
+              <p className="text-xs text-[var(--color-muted)]">
+                أنهِ جميع جلسات تسجيل الدخول المفتوحة على أجهزتك الأخرى فوراً.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={logoutAllBusy}
+              onClick={handleLogoutAllDevices}
+              className="min-h-[42px] px-4 py-2 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-950/50 text-red-700 dark:text-red-300 text-xs font-bold inline-flex items-center gap-2 cursor-pointer disabled:opacity-60"
+            >
+              <LogOut size={14} aria-hidden="true" />
+              <span>{logoutAllBusy ? 'جاري الإنهاء...' : 'تسجيل الخروج من جميع الأجهزة'}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Full Notifications Center Tab (linked from Header Notification Bell Footer) */}
+      {activeTab === 'notifications' && (
+        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden">
+          <div className="p-4 sm:p-5 border-b border-[var(--color-border)] flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <span className="w-10 h-10 rounded-xl bg-[var(--color-cream)] border border-[var(--color-border)] text-[var(--color-green-ink)] flex items-center justify-center shrink-0">
+                <Bell size={18} aria-hidden="true" />
+              </span>
+              <div>
+                <h2 className="font-display text-base sm:text-lg font-extrabold text-[var(--color-ink)]">
+                  سجل الإشعارات ({notifications.length})
+                </h2>
+                <p className="text-xs text-[var(--color-muted)]">
+                  جميع تنبيهات الرسائل، عروض الأسعار، وحالة الإعلانات.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-1">
+                <button
+                  type="button"
+                  onClick={() => setNotifFilter('all')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                    notifFilter === 'all'
+                      ? 'bg-[var(--color-green)] text-white'
+                      : 'text-[var(--color-muted)] hover:text-[var(--color-ink)]'
+                  }`}
+                >
+                  الكل ({notifications.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNotifFilter('unread')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                    notifFilter === 'unread'
+                      ? 'bg-[var(--color-green)] text-white'
+                      : 'text-[var(--color-muted)] hover:text-[var(--color-ink)]'
+                  }`}
+                >
+                  غير مقروءة ({unreadNotificationsCount})
+                </button>
+              </div>
+
+              {unreadNotificationsCount > 0 && onMarkAllNotificationsRead && (
+                <button
+                  type="button"
+                  onClick={onMarkAllNotificationsRead}
+                  className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-cream)] hover:bg-[var(--color-cream-hover)] text-xs font-bold text-[var(--color-green-ink)] inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <CheckCheck size={14} aria-hidden="true" />
+                  <span>تحديد الكل كمقروء</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {(() => {
+            const visibleNotifications =
+              notifFilter === 'unread'
+                ? notifications.filter((n) => !n.read)
+                : notifications;
+            if (visibleNotifications.length === 0) {
+              return (
+                <div className="p-10 text-center space-y-2">
+                  <Bell size={28} className="mx-auto text-[var(--color-muted)]/60" aria-hidden="true" />
+                  <p className="text-sm font-semibold text-[var(--color-muted)]">
+                    {notifFilter === 'unread'
+                      ? 'لا توجد إشعارات غير مقروءة حالياً'
+                      : 'لا توجد إشعارات في سجل حسابك حالياً'}
+                  </p>
+                </div>
+              );
+            }
+            return (
+              <div className="divide-y divide-[var(--color-border)]">
+                {visibleNotifications.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onOpenNotification?.(item)}
+                    className={`w-full text-start p-4 sm:px-6 transition-colors flex items-start gap-3.5 cursor-pointer ${
+                      item.read
+                        ? 'bg-[var(--color-surface)] hover:bg-[var(--color-cream)]/40'
+                        : 'bg-[var(--color-cream)]/75 hover:bg-[var(--color-cream)]'
+                    }`}
+                  >
+                    <div className="w-9 h-9 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-center shrink-0 mt-0.5">
+                      {item.type === 'offer_accepted' ||
+                      item.type === 'listing_approved' ||
+                      item.type === 'commission_approved' ? (
+                        <CheckCircle2 size={16} className="text-[var(--color-green-ink)]" aria-hidden="true" />
+                      ) : item.type === 'featured_approved' ? (
+                        <Sparkles size={16} className="text-[var(--color-gold)]" aria-hidden="true" />
+                      ) : item.type === 'commission_due' || item.type === 'commission_submitted' ? (
+                        <BadgePercent size={16} className="text-[var(--color-green-ink)]" aria-hidden="true" />
+                      ) : item.type === 'offer_rejected' ||
+                        item.type === 'listing_rejected' ||
+                        item.type === 'commission_rejected' ? (
+                        <XCircle size={16} className="text-red-700 dark:text-red-400" aria-hidden="true" />
+                      ) : item.type === 'seller_verified' ? (
+                        <ShieldCheck size={16} className="text-[var(--color-green-ink)]" aria-hidden="true" />
+                      ) : item.type === 'seller_verification_rejected' ? (
+                        <ShieldAlert size={16} className="text-red-700 dark:text-red-400" aria-hidden="true" />
+                      ) : item.type === 'new_comment' || item.type === 'comment_reply' ? (
+                        <MessageCircle size={16} className="text-[var(--color-green-ink)]" aria-hidden="true" />
+                      ) : item.type === 'listing_liked' ? (
+                        <ThumbsUp size={16} className="text-[var(--color-gold)]" aria-hidden="true" />
+                      ) : (
+                        <MessageSquare size={16} className="text-[var(--color-gold)]" aria-hidden="true" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-bold text-[var(--color-ink)] truncate">
+                          {item.title}
+                        </p>
+                        {!item.read && (
+                          <span className="px-2 py-0.5 rounded bg-[var(--color-gold-soft)] text-[var(--color-ink)] text-[10px] font-bold shrink-0">
+                            جديد
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs sm:text-sm text-[var(--color-muted)] mt-1 leading-relaxed">
+                        {item.body}
+                      </p>
+                      <p className="text-[11px] text-[var(--color-muted)]/80 mt-1.5 tabular-nums">
+                        {formatRelativeArabicTime(item.createdAt)}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
       {/* Tab 1: My Listings */}
       {activeTab === 'my-listings' && (
         <div className="space-y-8">
-          {(currentUser.role === 'seller' || myListings.length > 0 || myVerification) && (
+          {(currentUser.role !== 'admin' || myListings.length > 0 || myVerification) && (
             <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="space-y-1">
                 <div className="flex flex-wrap items-center gap-2">

@@ -13,6 +13,7 @@ import type {
   BootstrapPayload,
   Breed,
   Conversation,
+  FacebookAuthConfig,
   GoogleAuthConfig,
   InquiryStatus,
   Listing,
@@ -109,13 +110,19 @@ export const api = {
 
   getActivitySnapshot: () => apiFetch<ActivitySnapshotPayload>('/api/v1/me/activity'),
 
-  login: (payload: { phone: string; password: string }) =>
+  login: (payload: { phone?: string; email?: string; password: string }) =>
     apiFetch<{ user: User; csrfToken: string }>('/api/v1/auth/login', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
 
-  register: (payload: { name: string; phone: string; password: string; role: 'buyer' | 'seller' }) =>
+  register: (payload: {
+    name: string;
+    phone: string;
+    email?: string;
+    password: string;
+    role: 'buyer' | 'seller';
+  }) =>
     apiFetch<{ user: User; csrfToken: string }>('/api/v1/auth/register', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -167,6 +174,41 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  getFacebookAuthConfig: () => apiFetch<FacebookAuthConfig>('/api/v1/auth/facebook/config'),
+
+  getFacebookOAuthUrl: (
+    params: { role?: 'buyer' | 'seller'; mode?: 'login' | 'register'; intent?: 'auth' | 'link' } = {}
+  ) => {
+    const search = new URLSearchParams();
+    if (params.role) search.set('role', params.role);
+    if (params.mode) search.set('mode', params.mode);
+    if (params.intent) search.set('intent', params.intent);
+    const qs = search.toString();
+    return apiFetch<{ url: string }>(`/api/v1/auth/facebook/url${qs ? `?${qs}` : ''}`);
+  },
+
+  linkFacebookWithPassword: (payload: {
+    phone?: string;
+    email?: string;
+    password: string;
+    linkToken: string;
+  }) =>
+    apiFetch<{
+      user: User;
+      csrfToken: string;
+      linked: boolean;
+      needsProfileCompletion: boolean;
+    }>('/api/v1/auth/facebook/link-with-password', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  linkFacebookIdentity: (payload: { linkToken: string; password?: string }) =>
+    apiFetch<{ user: User; linked: boolean }>('/api/v1/auth/facebook/link', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
   completeProfile: (payload: {
     phone: string;
     name?: string;
@@ -178,6 +220,8 @@ export const api = {
     }),
 
   logout: () => apiFetch<{ ok: boolean }>('/api/v1/auth/logout', { method: 'POST' }),
+
+  logoutAll: () => apiFetch<{ ok: boolean }>('/api/v1/auth/logout-all', { method: 'POST' }),
 
   getListings: (
     params: Record<string, string | number | boolean | undefined> = {},

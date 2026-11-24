@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 
 test('Phase 4C Dashboard, Messaging, Analytics, Auth, Forms, Admin, and Seller Profile preserve contracts and upgrade UX', () => {
   const authSrc = readFileSync(resolve(process.cwd(), 'src/components/AuthView.tsx'), 'utf8');
-  assert.match(authSrc, /lg:grid-cols-12/);
+  assert.match(authSrc, /max-w-\[490px\]/);
   assert.match(authSrc, /htmlFor="auth-phone"/);
   assert.match(authSrc, /htmlFor="auth-password"/);
   assert.match(authSrc, /aria-pressed=\{showPassword\}/);

@@ -223,17 +223,20 @@ export function prepareMigrationSnapshot(rawStore: StoreData): PreparedMigration
       warnings.push(`google_identities: skipped orphan identity "${g.id}" for missing user "${g.userId}".`);
       continue;
     }
+    const provider = g.provider === 'facebook' ? 'facebook' : 'google';
     const subject = String(g.subject || '').trim();
-    if (!subject || seenGoogleSubjects.has(subject) || seenGoogleUsers.has(g.userId)) {
+    const subjectKey = `${provider}:${subject}`;
+    const userProviderKey = `${g.userId}:${provider}`;
+    if (!subject || seenGoogleSubjects.has(subjectKey) || seenGoogleUsers.has(userProviderKey)) {
       warnings.push(`google_identities: skipped duplicate/invalid identity "${g.id}".`);
       continue;
     }
-    seenGoogleSubjects.add(subject);
-    seenGoogleUsers.add(g.userId);
+    seenGoogleSubjects.add(subjectKey);
+    seenGoogleUsers.add(userProviderKey);
     googleIdentityRows.push({
       id: String(g.id),
       userId: String(g.userId),
-      provider: 'google',
+      provider,
       subject: subject.slice(0, 255),
       email: String(g.email || '').trim().toLowerCase().slice(0, 255),
       emailVerified: Boolean(g.emailVerified),

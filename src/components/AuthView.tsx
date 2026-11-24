@@ -1,17 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Check,
+  ArrowRight,
   CheckCircle2,
   Eye,
   EyeOff,
+  HelpCircle,
   Link2,
   Loader2,
   Lock,
-  MessageSquare,
+  Mail,
   Phone,
   ShieldCheck,
-  ShoppingBag,
-  Store,
+  Sparkles,
   User as UserIcon,
 } from 'lucide-react';
 import { ApiError, api, setCsrfToken } from '../lib/api';
@@ -21,14 +21,16 @@ import {
   promptGoogleOneTap,
   renderGoogleOfficialButton,
 } from '../lib/google-auth';
+import { openFacebookOAuthPopup } from '../lib/facebook-auth';
 import {
   normalizeSaudiMobileClient,
   validatePasswordClient,
 } from '../lib/auth-validation';
 import type { AuthMode } from '../lib/router';
-import type { GoogleAuthConfig, User } from '../types/marketplace';
+import type { FacebookAuthConfig, GoogleAuthConfig, User } from '../types/marketplace';
 
 export interface GoogleAuthSuccessPayload {
+  provider?: 'google' | 'facebook';
   user?: User;
   csrfToken?: string | null;
   isNewUser?: boolean;
@@ -41,29 +43,80 @@ interface AuthViewProps {
   initialMode?: AuthMode;
   onModeChange?: (mode: AuthMode) => void;
   googleAuth?: GoogleAuthConfig;
+  facebookAuth?: FacebookAuthConfig;
   onGoogleSuccess?: (payload: GoogleAuthSuccessPayload) => Promise<void> | void;
-  onLogin: (phone: string, password: string) => Promise<void>;
+  onLogin: (payload: { phone?: string; email?: string; password: string }) => Promise<void>;
   onRegister: (
     name: string,
     phone: string,
     password: string,
-    role: 'buyer' | 'seller'
+    role: 'buyer' | 'seller',
+    email?: string
   ) => Promise<void>;
   onGoHome?: () => void;
 }
 
 const fieldCls =
-  'w-full h-11 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-ink)] placeholder:text-[var(--color-muted)]/75 focus:outline-none focus:border-[var(--color-green-ink)] focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]/50 transition-colors';
+  'w-full h-11 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-ink)] placeholder:text-[var(--color-muted)]/75 focus:outline-none focus:border-[var(--color-green-ink)] focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]/45 transition-colors';
+
+const EMAIL_CLIENT_REGEX = /^[^\s@<>()[\]\\,;:"']+@[^\s@<>()[\]\\,;:"']+\.[^\s@<>()[\]\\,;:"']{2,}$/;
+
+function computePasswordStrength(password: string): {
+  score: 0 | 1 | 2 | 3 | 4;
+  label: string;
+  barColor: string;
+  textColor: string;
+} {
+  if (!password) {
+    return { score: 0, label: '', barColor: 'bg-[var(--color-border)]', textColor: 'text-[var(--color-muted)]' };
+  }
+  const len = [...password].length;
+  const hasLower = /[a-z]/.test(password);
+  const hasUpper = /[A-Z]/.test(password);
+  const hasArabic = /[\u0600-\u06FF]/.test(password);
+  const hasDigit = /\d/.test(password);
+  const hasSymbol = /[^A-Za-z0-9\u0600-\u06FF\s]/.test(password);
+  const variety =
+    (hasLower || hasArabic ? 1 : 0) +
+    (hasUpper ? 1 : 0) +
+    (hasDigit ? 1 : 0) +
+    (hasSymbol ? 1 : 0);
+
+  if (len < 10 || /^(.)\1+$/u.test(password)) {
+    return {
+      score: 1,
+      label: 'ضعيفة (10 أحرف على الأقل)',
+      barColor: 'bg-red-500',
+      textColor: 'text-red-600 dark:text-red-400',
+    };
+  }
+  if (len >= 14 && variety >= 3) {
+    return {
+      score: 4,
+      label: 'قوية جداً',
+      barColor: 'bg-emerald-600',
+      textColor: 'text-emerald-700 dark:text-emerald-400',
+    };
+  }
+  if (len >= 11 && variety >= 2) {
+    return {
+      score: 3,
+      label: 'جيدة وموثوقة',
+      barColor: 'bg-[var(--color-green)]',
+      textColor: 'text-[var(--color-green-ink)]',
+    };
+  }
+  return {
+    score: 2,
+    label: 'مقبولة (أضف أرقاماً أو رموزاً لزيادة الأمان)',
+    barColor: 'bg-amber-500',
+    textColor: 'text-amber-700 dark:text-amber-400',
+  };
+}
 
 function GoogleOfficialLogo() {
   return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      className="shrink-0"
-    >
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" className="shrink-0">
       <path
         fill="#4285F4"
         d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47a5.54 5.54 0 0 1-2.4 3.63v3.01h3.88c2.27-2.09 3.54-5.17 3.54-8.88Z"
@@ -84,25 +137,69 @@ function GoogleOfficialLogo() {
   );
 }
 
+function FacebookOfficialLogo() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" className="shrink-0">
+      <path
+        fill="currentColor"
+        d="M22.675 0H1.325C.593 0 0 .593 0 1.325v21.351C0 23.407.593 24 1.325 24H12.82v-9.294H9.692v-3.622h3.128V8.413c0-3.1 1.893-4.788 4.659-4.788 1.325 0 2.463.099 2.795.143v3.24l-1.918.001c-1.504 0-1.795.715-1.795 1.763v2.313h3.587l-.467 3.622h-3.12V24h6.116c.73 0 1.323-.593 1.323-1.325V1.325C24 .593 23.407 0 22.675 0Z"
+      />
+    </svg>
+  );
+}
+
+function SaudiFlagPrefix() {
+  return (
+    <div
+      dir="ltr"
+      aria-hidden="true"
+      className="h-11 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-cream)]/75 inline-flex items-center gap-1.5 text-xs font-extrabold text-[var(--color-ink)] shrink-0 select-none"
+    >
+      <span
+        className="inline-flex items-center justify-center w-5 h-3.5 rounded-[3px] bg-[#006C35] text-white text-[9px] font-bold tracking-tight"
+        title="المملكة العربية السعودية"
+      >
+        SA
+      </span>
+      <span className="tabular-nums text-[var(--color-green-ink)]">+966</span>
+    </div>
+  );
+}
+
 export function AuthView({
   reason,
   initialMode = 'login',
   onModeChange,
   googleAuth,
+  facebookAuth,
   onGoogleSuccess,
   onLogin,
   onRegister,
   onGoHome,
 }: AuthViewProps) {
   const [mode, setMode] = useState<AuthMode>(initialMode);
-  const [name, setName] = useState('');
+
+  // Login state (Phone OR Email switcher inspired by Celebim)
+  const [loginMethod, setLoginMethod] = useState<'phone' | 'email'>('phone');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
+
+  // Register state (First Name + Last Name + optional Email + Saudi Phone + Role + Password + Legal Consent)
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [registerEmail, setRegisterEmail] = useState('');
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [acceptedAlerts, setAcceptedAlerts] = useState(false);
+  const [termsPreviewOpen, setTermsPreviewOpen] = useState(false);
+
+  // Shared credentials
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [role, setRole] = useState<'buyer' | 'seller'>('buyer');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
+  // Google OAuth / GIS state
   const [resolvedGoogleConfig, setResolvedGoogleConfig] = useState<GoogleAuthConfig | null>(
     googleAuth ?? null
   );
@@ -110,14 +207,25 @@ export function AuthView({
   const [showOfficialGisFallback, setShowOfficialGisFallback] = useState(false);
   const officialGisContainerRef = useRef<HTMLDivElement | null>(null);
 
+  // Facebook OAuth state
+  const [resolvedFacebookConfig, setResolvedFacebookConfig] = useState<FacebookAuthConfig | null>(
+    facebookAuth ?? null
+  );
+  const [facebookBusy, setFacebookBusy] = useState(false);
+
+  // Proof-of-ownership inline account linking (shared securely for Google or Facebook collisions)
+  const [pendingLinkProvider, setPendingLinkProvider] = useState<'google' | 'facebook' | null>(null);
   const [pendingLinkCredential, setPendingLinkCredential] = useState<string | null>(null);
-  const [linkPhone, setLinkPhone] = useState('');
+  const [pendingLinkEmailHint, setPendingLinkEmailHint] = useState<string>('');
+  const [linkPhoneOrEmail, setLinkPhoneOrEmail] = useState('');
   const [linkPassword, setLinkPassword] = useState('');
   const [linkBusy, setLinkBusy] = useState(false);
 
   const activeGoogleConfig = googleAuth ?? resolvedGoogleConfig;
   const googleClientId = activeGoogleConfig?.clientId?.trim() || '';
   const isGoogleReady = Boolean(googleClientId && activeGoogleConfig?.enabled !== false);
+
+  const activeFacebookConfig = facebookAuth ?? resolvedFacebookConfig;
 
   useEffect(() => {
     setMode(initialMode);
@@ -136,7 +244,7 @@ export function AuthView({
         if (!cancelled) setResolvedGoogleConfig(cfg);
       })
       .catch(() => {
-        // Leave null; click handler will report clear Arabic guidance
+        // Handled cleanly on click
       });
     return () => {
       cancelled = true;
@@ -144,9 +252,28 @@ export function AuthView({
   }, [googleAuth]);
 
   useEffect(() => {
+    if (facebookAuth) {
+      setResolvedFacebookConfig(facebookAuth);
+      return;
+    }
+    let cancelled = false;
+    api
+      .getFacebookAuthConfig()
+      .then((cfg) => {
+        if (!cancelled) setResolvedFacebookConfig(cfg);
+      })
+      .catch(() => {
+        // Handled cleanly on click
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [facebookAuth]);
+
+  useEffect(() => {
     if (isGoogleReady) {
       loadGoogleIdentityScript().catch(() => {
-        // Preload is best-effort; click flow handles network errors cleanly
+        // Preload is best-effort
       });
     }
   }, [isGoogleReady, googleClientId]);
@@ -154,14 +281,24 @@ export function AuthView({
   const switchMode = (nextMode: AuthMode) => {
     setMode(nextMode);
     setError('');
+    setPendingLinkProvider(null);
     setPendingLinkCredential(null);
     setShowOfficialGisFallback(false);
+    setForgotPasswordOpen(false);
     onModeChange?.(nextMode);
   };
 
   const normalizedPhone = normalizeSaudiMobileClient(phone);
   const phoneTouched = phone.trim().length > 0;
   const phoneValid = Boolean(normalizedPhone);
+
+  const loginEmailTrimmed = loginEmail.trim().toLowerCase();
+  const loginEmailValid = EMAIL_CLIENT_REGEX.test(loginEmailTrimmed);
+
+  const passwordStrength = useMemo(
+    () => (mode === 'register' ? computePasswordStrength(password) : null),
+    [mode, password]
+  );
 
   const submitGoogleCredential = useCallback(
     async (credential: string) => {
@@ -170,13 +307,15 @@ export function AuthView({
       try {
         const res = await api.loginWithGoogle({
           credential,
-          role: mode === 'register' ? role : undefined,
+          role: mode === 'register' ? 'seller' : undefined,
           mode,
         });
         setCsrfToken(res.csrfToken);
+        setPendingLinkProvider(null);
         setPendingLinkCredential(null);
         setShowOfficialGisFallback(false);
         await onGoogleSuccess?.({
+          provider: 'google',
           user: res.user,
           csrfToken: res.csrfToken,
           isNewUser: res.isNewUser,
@@ -184,8 +323,10 @@ export function AuthView({
         });
       } catch (err: any) {
         if (err instanceof ApiError && err.code === 'account_exists_link_required') {
+          setPendingLinkProvider('google');
           setPendingLinkCredential(credential);
-          setLinkPhone(normalizedPhone || '');
+          setPendingLinkEmailHint('');
+          setLinkPhoneOrEmail(normalizedPhone || '');
           setLinkPassword('');
           setShowOfficialGisFallback(false);
           setError(
@@ -199,7 +340,7 @@ export function AuthView({
         setGoogleBusy(false);
       }
     },
-    [mode, role, normalizedPhone, onGoogleSuccess]
+    [mode, normalizedPhone, onGoogleSuccess]
   );
 
   useEffect(() => {
@@ -222,8 +363,9 @@ export function AuthView({
   }, [showOfficialGisFallback, isGoogleReady, googleClientId, mode, submitGoogleCredential]);
 
   const handleGoogleContinue = async () => {
-    if (busy || googleBusy || linkBusy) return;
+    if (busy || googleBusy || facebookBusy || linkBusy) return;
     setError('');
+    setPendingLinkProvider(null);
     setPendingLinkCredential(null);
 
     let cfg = activeGoogleConfig;
@@ -243,7 +385,7 @@ export function AuthView({
     const clientId = cfg?.clientId?.trim() || '';
     if (!clientId || cfg?.enabled === false) {
       setError(
-        'تسجيل الدخول عبر Google غير مفعّل حالياً في إعدادات الخادم (GOOGLE_CLIENT_ID غير مضبوط).'
+        'تسجيل الدخول عبر Google غير مفعّل حالياً في إعدادات الخادم (يرجى إضافة GOOGLE_CLIENT_ID في الأسرار).'
       );
       return;
     }
@@ -260,16 +402,16 @@ export function AuthView({
         return;
       }
 
-      // One Tap suppressed or skipped by browser (FedCM / cooldown / privacy settings):
       if (cfg.codeFlowEnabled) {
         const { url } = await api.getGoogleOAuthUrl({
-          role: mode === 'register' ? role : undefined,
+          role: mode === 'register' ? 'seller' : undefined,
           mode,
         });
         const popupResult = await openGoogleOAuthPopup(url);
         if (popupResult.ok) {
           setShowOfficialGisFallback(false);
           await onGoogleSuccess?.({
+            provider: 'google',
             isNewUser: popupResult.isNewUser,
             needsProfileCompletion: popupResult.needsProfileCompletion,
           });
@@ -282,7 +424,6 @@ export function AuthView({
         return;
       }
 
-      // Without server client secret, fall back cleanly to official Google Identity button
       setShowOfficialGisFallback(true);
     } catch (err: any) {
       setError(err?.message || 'تعذر بدء المصادقة عبر Google');
@@ -291,14 +432,89 @@ export function AuthView({
     }
   };
 
+  const handleFacebookContinue = async () => {
+    if (busy || googleBusy || facebookBusy || linkBusy) return;
+    setError('');
+    setPendingLinkProvider(null);
+    setPendingLinkCredential(null);
+    setShowOfficialGisFallback(false);
+
+    let cfg = activeFacebookConfig;
+    if (!cfg) {
+      setFacebookBusy(true);
+      try {
+        cfg = await api.getFacebookAuthConfig();
+        setResolvedFacebookConfig(cfg);
+      } catch (err: any) {
+        setFacebookBusy(false);
+        setError(err?.message || 'تعذر التحقق من إعدادات تسجيل الدخول عبر Facebook');
+        return;
+      }
+      setFacebookBusy(false);
+    }
+
+    if (!cfg?.enabled) {
+      setError(
+        'تسجيل الدخول عبر Facebook غير مفعّل حالياً في إعدادات الخادم (يرجى إضافة FACEBOOK_APP_ID و FACEBOOK_APP_SECRET في الأسرار).'
+      );
+      return;
+    }
+
+    setFacebookBusy(true);
+    try {
+      const { url } = await api.getFacebookOAuthUrl({
+        role: mode === 'register' ? 'seller' : undefined,
+        mode,
+        intent: 'auth',
+      });
+      const popupResult = await openFacebookOAuthPopup(url);
+      if (popupResult.ok && popupResult.intent === 'auth') {
+        await onGoogleSuccess?.({
+          provider: 'facebook',
+          isNewUser: popupResult.isNewUser,
+          needsProfileCompletion: popupResult.needsProfileCompletion,
+        });
+        return;
+      }
+      if (!popupResult.ok && popupResult.code === 'account_exists_link_required' && popupResult.linkToken) {
+        setPendingLinkProvider('facebook');
+        setPendingLinkCredential(popupResult.linkToken);
+        setPendingLinkEmailHint(popupResult.email || '');
+        setLinkPhoneOrEmail(popupResult.email || normalizedPhone || '');
+        setLinkPassword('');
+        setError(
+          popupResult.error ||
+            'يوجد حساب مسجل مسبقاً بهذا البريد الإلكتروني. أدخل بيانات حسابك الحالي لتأكيد ملكيته وربطه بحساب Facebook.'
+        );
+        return;
+      }
+      if (!popupResult.ok) {
+        setError(popupResult.error);
+      }
+    } catch (err: any) {
+      setError(err?.message || 'تعذر إتمام تسجيل الدخول عبر Facebook');
+    } finally {
+      setFacebookBusy(false);
+    }
+  };
+
   const handleConfirmAccountLink = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!pendingLinkCredential || linkBusy) return;
+    if (!pendingLinkProvider || !pendingLinkCredential || linkBusy) return;
     setError('');
 
-    const cleanedPhone = normalizeSaudiMobileClient(linkPhone);
-    if (!cleanedPhone) {
+    const rawIdentifier = linkPhoneOrEmail.trim();
+    const cleanedPhone = normalizeSaudiMobileClient(rawIdentifier);
+    const cleanedEmail = EMAIL_CLIENT_REGEX.test(rawIdentifier.toLowerCase())
+      ? rawIdentifier.toLowerCase()
+      : null;
+
+    if (pendingLinkProvider === 'google' && !cleanedPhone) {
       setError('أدخل رقم جوال سعودي صحيح بصيغة 05XXXXXXXX لإثبات ملكية الحساب');
+      return;
+    }
+    if (pendingLinkProvider === 'facebook' && !cleanedPhone && !cleanedEmail) {
+      setError('أدخل رقم جوال سعودي (05XXXXXXXX) أو البريد الإلكتروني المسجل للحساب');
       return;
     }
     if (!linkPassword) {
@@ -308,21 +524,44 @@ export function AuthView({
 
     setLinkBusy(true);
     try {
-      const res = await api.linkGoogleWithPassword({
-        phone: cleanedPhone,
-        password: linkPassword,
-        credential: pendingLinkCredential,
-      });
-      setCsrfToken(res.csrfToken);
-      setPendingLinkCredential(null);
-      setLinkPassword('');
-      await onGoogleSuccess?.({
-        user: res.user,
-        csrfToken: res.csrfToken,
-        needsProfileCompletion: res.needsProfileCompletion,
-      });
+      if (pendingLinkProvider === 'facebook') {
+        const res = await api.linkFacebookWithPassword({
+          ...(cleanedPhone ? { phone: cleanedPhone } : { email: cleanedEmail! }),
+          password: linkPassword,
+          linkToken: pendingLinkCredential,
+        });
+        setCsrfToken(res.csrfToken);
+        setPendingLinkProvider(null);
+        setPendingLinkCredential(null);
+        setLinkPassword('');
+        await onGoogleSuccess?.({
+          provider: 'facebook',
+          user: res.user,
+          csrfToken: res.csrfToken,
+          needsProfileCompletion: res.needsProfileCompletion,
+        });
+      } else {
+        const res = await api.linkGoogleWithPassword({
+          phone: cleanedPhone!,
+          password: linkPassword,
+          credential: pendingLinkCredential,
+        });
+        setCsrfToken(res.csrfToken);
+        setPendingLinkProvider(null);
+        setPendingLinkCredential(null);
+        setLinkPassword('');
+        await onGoogleSuccess?.({
+          provider: 'google',
+          user: res.user,
+          csrfToken: res.csrfToken,
+          needsProfileCompletion: res.needsProfileCompletion,
+        });
+      }
     } catch (err: any) {
-      setError(err?.message || 'تعذر ربط الحساب بـ Google، تحقق من البيانات وحاول مرة أخرى');
+      setError(
+        err?.message ||
+          `تعذر ربط الحساب بـ ${pendingLinkProvider === 'facebook' ? 'Facebook' : 'Google'}، تحقق من البيانات وحاول مرة أخرى`
+      );
     } finally {
       setLinkBusy(false);
     }
@@ -332,14 +571,20 @@ export function AuthView({
     e.preventDefault();
     setError('');
 
-    const trimmedName = name.trim();
-    const cleanedPhone = normalizeSaudiMobileClient(phone);
-
     if (mode === 'register') {
-      if (trimmedName.length < 2 || trimmedName.length > 80) {
-        setError('يرجى إدخال الاسم الكامل (حرفان على الأقل)');
+      const f = firstName.trim();
+      const l = lastName.trim();
+      const combinedName = `${f} ${l}`.trim();
+      if (f.length < 2 || l.length < 2 || combinedName.length > 80) {
+        setError('يرجى إدخال الاسم الأول واسم العائلة (حرفان على الأقل لكل منهما)');
         return;
       }
+      const cleanEmail = registerEmail.trim().toLowerCase();
+      if (cleanEmail && !EMAIL_CLIENT_REGEX.test(cleanEmail)) {
+        setError('صيغة البريد الإلكتروني غير صحيحة');
+        return;
+      }
+      const cleanedPhone = normalizeSaudiMobileClient(phone);
       if (!cleanedPhone) {
         setError('رقم الجوال غير صحيح، استخدم صيغة جوال سعودي مثل 05XXXXXXXX');
         return;
@@ -349,51 +594,115 @@ export function AuthView({
         setError(pwError);
         return;
       }
-    } else {
-      if (!cleanedPhone) {
-        setError('أدخل رقم جوال سعودي صحيح بصيغة 05XXXXXXXX');
+      if (!acceptedTerms) {
+        setError('يرجى الموافقة على شروط الاستخدام وسياسة الخصوصية لإتمام التسجيل');
+        return;
+      }
+
+      setBusy(true);
+      try {
+        await onRegister(combinedName, cleanedPhone, password, 'seller', cleanEmail || undefined);
+        setPassword('');
+      } catch (err: any) {
+        setError(err?.message || 'تعذر إنشاء الحساب');
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
+    // Login mode
+    if (loginMethod === 'email') {
+      if (!loginEmailValid) {
+        setError('أدخل بريداً إلكترونياً صحيحاً');
         return;
       }
       if (!password) {
         setError('أدخل كلمة المرور');
         return;
       }
+      setBusy(true);
+      try {
+        await onLogin({ email: loginEmailTrimmed, password });
+        setPassword('');
+      } catch (err: any) {
+        setError(err?.message || 'تعذر تسجيل الدخول');
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
+    const cleanedPhone = normalizeSaudiMobileClient(phone);
+    if (!cleanedPhone) {
+      setError('أدخل رقم جوال سعودي صحيح بصيغة 05XXXXXXXX');
+      return;
+    }
+    if (!password) {
+      setError('أدخل كلمة المرور');
+      return;
     }
 
     setBusy(true);
     try {
-      if (mode === 'login') {
-        await onLogin(cleanedPhone, password);
-      } else {
-        await onRegister(trimmedName, cleanedPhone, password, role);
-      }
+      await onLogin({ phone: cleanedPhone, password });
       setPassword('');
     } catch (err: any) {
-      setError(err?.message || 'تعذر إكمال العملية');
+      setError(err?.message || 'تعذر تسجيل الدخول');
     } finally {
       setBusy(false);
     }
   };
 
-  return (
-    <section className="bg-[var(--color-canvas)] transition-colors">
-      {onGoHome && (
-        <div className="max-w-6xl mx-auto px-3 sm:px-6 lg:px-8 pt-6 sm:pt-8">
-          <button
-            type="button"
-            onClick={onGoHome}
-            className="text-sm font-semibold text-[var(--color-green-ink)] hover:underline cursor-pointer"
-          >
-            العودة إلى الرئيسية
-          </button>
-        </div>
-      )}
+  const socialBusy = googleBusy || facebookBusy;
 
-      <div className="max-w-6xl mx-auto px-3 sm:px-6 lg:px-8 py-6 sm:py-10 space-y-6">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
-        {/* Main Auth Card */}
-        <div className="lg:col-span-7 bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-5 sm:p-8 space-y-6">
-          {/* Mode Tabs */}
+  return (
+    <section
+      aria-label={mode === 'login' ? 'تسجيل الدخول' : 'إنشاء حساب جديد'}
+      className="min-h-[calc(100vh-120px)] w-full py-7 sm:py-11 px-3 sm:px-6 bg-gradient-to-b from-[var(--color-surface)] via-[var(--color-canvas)] to-[var(--color-cream)]/65 flex flex-col items-center justify-center transition-colors"
+    >
+      {/* Back link + Centered Brand Logo Header (Celebim-style framing) */}
+      <div className="w-full max-w-[490px] mb-5 space-y-4">
+        {onGoHome && (
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={onGoHome}
+              className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-bold text-[var(--color-green-ink)] hover:underline cursor-pointer"
+            >
+              <ArrowRight size={15} aria-hidden="true" />
+              <span>العودة إلى الرئيسية</span>
+            </button>
+            <span className="text-[11px] font-semibold text-[var(--color-muted)] inline-flex items-center gap-1">
+              <ShieldCheck size={13} className="text-[var(--color-green-ink)]" aria-hidden="true" />
+              اتصال مشفر وآمن
+            </span>
+          </div>
+        )}
+
+        <div className="text-center space-y-2">
+          <div className="inline-flex items-center justify-center gap-2.5">
+            <span className="w-11 h-11 rounded-2xl bg-[var(--color-green)] border-2 border-[var(--color-gold)]/70 shadow-sm inline-flex items-center justify-center text-[#F4C569]">
+              <ShieldCheck size={22} aria-hidden="true" />
+            </span>
+            <div className="text-start">
+              <p className="font-display text-xl sm:text-2xl font-extrabold text-[var(--color-ink)] leading-none">
+                سوق الغنم
+              </p>
+              <p className="text-[11px] font-semibold text-[var(--color-green-ink)] mt-1">
+                المنصة السعودية الموثوقة لتجارة المواشي
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Centered Elevated Auth Card */}
+      <div className="w-full max-w-[490px] bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-[0_18px_46px_-16px_rgba(11,61,46,0.14)] overflow-hidden">
+        <div className="h-1 w-full bg-gradient-to-r from-[var(--color-green)] via-[var(--color-gold)] to-[var(--color-green)]" />
+
+        <div className="p-5 sm:p-7 space-y-5">
+          {/* Segmented Top Switcher */}
           <div
             role="tablist"
             aria-label="خيارات الحساب"
@@ -404,9 +713,9 @@ export function AuthView({
               role="tab"
               aria-selected={mode === 'login'}
               onClick={() => switchMode('login')}
-              className={`min-h-[44px] sm:min-h-[40px] rounded-lg text-xs sm:text-sm font-bold transition-colors cursor-pointer ${
+              className={`min-h-[44px] sm:min-h-[40px] rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer ${
                 mode === 'login'
-                  ? 'bg-[var(--color-green)] text-white'
+                  ? 'bg-[var(--color-green)] text-white shadow-sm'
                   : 'text-[var(--color-muted)] hover:text-[var(--color-ink)]'
               }`}
             >
@@ -417,9 +726,9 @@ export function AuthView({
               role="tab"
               aria-selected={mode === 'register'}
               onClick={() => switchMode('register')}
-              className={`min-h-[44px] sm:min-h-[40px] rounded-lg text-xs sm:text-sm font-bold transition-colors cursor-pointer ${
+              className={`min-h-[44px] sm:min-h-[40px] rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer ${
                 mode === 'register'
-                  ? 'bg-[var(--color-green)] text-white'
+                  ? 'bg-[var(--color-green)] text-white shadow-sm'
                   : 'text-[var(--color-muted)] hover:text-[var(--color-ink)]'
               }`}
             >
@@ -427,499 +736,621 @@ export function AuthView({
             </button>
           </div>
 
-          <div className="space-y-2">
-            <h2 className="font-display text-xl sm:text-2xl font-extrabold text-[var(--color-ink)]">
-              {mode === 'login' ? 'تسجيل الدخول إلى حسابك' : 'إنشاء حساب جديد في سوق الغنم'}
-            </h2>
-            {reason ? (
-              <div
-                role="status"
-                className="rounded-xl border border-[var(--color-gold)]/50 bg-[var(--color-cream)] px-3.5 py-2.5 text-xs sm:text-sm font-medium text-[var(--color-ink)] flex items-start gap-2"
-              >
-                <ShieldCheck
-                  size={16}
-                  className="text-[var(--color-green-ink)] shrink-0 mt-0.5"
-                  aria-hidden="true"
-                />
-                <span>{reason}</span>
-              </div>
-            ) : (
-              <p className="text-xs sm:text-sm text-[var(--color-muted)] leading-relaxed">
-                {mode === 'login'
-                  ? 'ادخل برقم الجوال السعودي وكلمة المرور أو عبر حسابك في Google للوصول إلى لوحة حسابك وعروض السوم والمحادثات.'
-                  : 'أنشئ حساباً جديداً عبر Google أو برقم الجوال السعودي واختر نوع الحساب المناسب لنشاطك في السوق.'}
-              </p>
-            )}
+          {/* Card Title & Subtitle */}
+          <div className="text-center space-y-1">
+            <h1 className="font-display text-xl sm:text-2xl font-extrabold text-[var(--color-ink)]">
+              {mode === 'login' ? 'تسجيل الدخول' : 'إنشاء حساب جديد'}
+            </h1>
+            <p className="text-xs sm:text-sm text-[var(--color-muted)] leading-relaxed">
+              {mode === 'login'
+                ? 'للدخول، يرجى إدخال بياناتك.'
+                : 'أنشئ حسابك في سوق الغنم 2.0 للمزايدة والشراء وعرض الحلال مباشرة.'}
+            </p>
           </div>
 
-          {error && (
-            <div
-              role="alert"
-              className="p-3.5 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-xs sm:text-sm text-red-700 dark:text-red-300 leading-relaxed"
-            >
-              {error}
+          {/* Redirect Reason Notice */}
+          {reason && (
+            <div className="p-3 rounded-xl bg-[var(--color-cream)] border border-[var(--color-gold)]/45 text-xs font-semibold text-[var(--color-ink)] flex items-center gap-2">
+              <Sparkles size={15} className="text-[var(--color-gold)] shrink-0" aria-hidden="true" />
+              <span>{reason}</span>
             </div>
           )}
 
-          {/* Account-Linking Proof-of-Ownership Flow */}
-          {pendingLinkCredential && (
+          {/* Error Banner */}
+          {error && (
+            <p
+              role="alert"
+              className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-xs sm:text-sm text-red-700 dark:text-red-300 leading-relaxed"
+            >
+              {error}
+            </p>
+          )}
+
+          {/* Proof-of-Ownership Inline Linking Panel (Google OR Facebook email collision protection) */}
+          {pendingLinkProvider && pendingLinkCredential ? (
             <form
               onSubmit={handleConfirmAccountLink}
-              className="rounded-xl border border-[var(--color-gold)]/70 bg-[var(--color-cream)] p-4 sm:p-5 space-y-4"
-              noValidate
+              className="rounded-xl border-2 border-[var(--color-gold)]/55 bg-[var(--color-cream)]/55 p-4 space-y-3.5"
             >
-              <div className="flex items-start gap-2.5">
-                <div className="w-9 h-9 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-green-ink)] flex items-center justify-center shrink-0">
-                  <Link2 size={17} aria-hidden="true" />
-                </div>
-                <div className="space-y-1">
-                  <h2 className="font-display text-sm sm:text-base font-bold text-[var(--color-ink)]">
-                    تأكيد ملكية الحساب الحالي لربطه بـ Google
-                  </h2>
-                  <p className="text-xs text-[var(--color-muted)] leading-relaxed">
-                    حمايةً لبياناتك، لا يتم ربط الحسابات تلقائياً بتطابق البريد الإلكتروني. أدخل رقم الجوال السعودي وكلمة المرور لإتمام الربط بأمان.
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label
-                    htmlFor="link-account-phone"
-                    className="block text-xs font-semibold text-[var(--color-ink)] mb-1"
-                  >
-                    رقم الجوال السعودي
-                  </label>
-                  <input
-                    id="link-account-phone"
-                    type="tel"
-                    dir="ltr"
-                    placeholder="05XXXXXXXX"
-                    value={linkPhone}
-                    onChange={(e) => setLinkPhone(e.target.value)}
-                    autoComplete="tel"
-                    inputMode="tel"
-                    required
-                    className={`${fieldCls} text-right tabular-nums`}
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-start gap-2">
+                  <Link2
+                    size={18}
+                    className="text-[var(--color-green-ink)] shrink-0 mt-0.5"
+                    aria-hidden="true"
                   />
+                  <div>
+                    <h2 className="font-display text-sm font-extrabold text-[var(--color-ink)]">
+                      تأكيد ملكية الحساب لربطه بـ{' '}
+                      {pendingLinkProvider === 'facebook' ? 'Facebook' : 'Google'}
+                    </h2>
+                    <p className="text-xs text-[var(--color-muted)] mt-0.5 leading-relaxed">
+                      لحماية حسابك، أدخل بيانات الدخول المسجلة{' '}
+                      {pendingLinkEmailHint ? `(${pendingLinkEmailHint}) ` : ''}
+                      مع كلمة المرور لإتمام الربط بأمان.
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <label
-                    htmlFor="link-account-password"
-                    className="block text-xs font-semibold text-[var(--color-ink)] mb-1"
-                  >
-                    كلمة المرور الحالية
-                  </label>
-                  <input
-                    id="link-account-password"
-                    type="password"
-                    placeholder="أدخل كلمة المرور"
-                    value={linkPassword}
-                    onChange={(e) => setLinkPassword(e.target.value)}
-                    autoComplete="current-password"
-                    required
-                    className={fieldCls}
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2.5">
-                <button
-                  type="submit"
-                  disabled={linkBusy}
-                  className="min-h-[44px] px-4 py-2 rounded-xl bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] disabled:opacity-60 text-white text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-2 cursor-pointer transition-colors"
-                >
-                  {linkBusy && <Loader2 size={16} className="animate-spin" aria-hidden="true" />}
-                  <span>{linkBusy ? 'جاري التحقق والربط...' : 'تأكيد الربط وتسجيل الدخول'}</span>
-                </button>
                 <button
                   type="button"
-                  disabled={linkBusy}
                   onClick={() => {
+                    setPendingLinkProvider(null);
                     setPendingLinkCredential(null);
                     setLinkPassword('');
                     setError('');
                   }}
-                  className="min-h-[44px] px-4 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-cream-hover)] text-xs sm:text-sm font-semibold text-[var(--color-ink)] cursor-pointer transition-colors"
+                  className="text-xs font-semibold text-[var(--color-muted)] hover:text-[var(--color-ink)] cursor-pointer shrink-0"
                 >
                   إلغاء
                 </button>
               </div>
-            </form>
-          )}
 
-          {/* Google Authentication Section (Login & Registration) */}
-          <div className="space-y-3">
-            <button
-              type="button"
-              onClick={handleGoogleContinue}
-              disabled={busy || googleBusy || linkBusy}
-              aria-busy={googleBusy}
-              className="w-full min-h-[44px] h-11 px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-cream)] hover:border-[var(--color-gold)] disabled:opacity-60 text-sm font-semibold text-[var(--color-ink)] inline-flex items-center justify-center gap-2.5 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]/50 shadow-2xs"
-            >
-              {googleBusy ? (
-                <>
-                  <Loader2
-                    size={17}
-                    className="animate-spin text-[var(--color-green-ink)] shrink-0"
-                    aria-hidden="true"
-                  />
-                  <span className="whitespace-nowrap">جاري التحقق عبر Google...</span>
-                </>
-              ) : (
-                <>
-                  <GoogleOfficialLogo />
-                  <span className="whitespace-nowrap">المتابعة باستخدام Google</span>
-                </>
-              )}
-            </button>
-
-            {showOfficialGisFallback && isGoogleReady && (
-              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-cream)]/60 p-3 flex flex-col items-center gap-2">
-                <p className="text-[11px] text-[var(--color-muted)] text-center">
-                  اختر حسابك مباشرة من زر Google الرسمي أدناه:
-                </p>
-                <div
-                  ref={officialGisContainerRef}
-                  className="min-h-[44px] flex items-center justify-center w-full"
-                />
-              </div>
-            )}
-
-            <div className="relative flex items-center py-1" aria-hidden="true">
-              <div className="flex-grow border-t border-[var(--color-border)]" />
-              <span className="shrink-0 mx-3 text-xs font-semibold text-[var(--color-muted)]">
-                أو
-              </span>
-              <div className="flex-grow border-t border-[var(--color-border)]" />
-            </div>
-          </div>
-
-          <form onSubmit={submit} className="space-y-4" noValidate>
-            {mode === 'register' && (
               <div>
                 <label
-                  htmlFor="auth-name"
-                  className="block text-xs font-semibold text-[var(--color-ink)] mb-1.5"
+                  htmlFor="link-account-identifier"
+                  className="block text-xs font-semibold text-[var(--color-ink)] mb-1"
                 >
-                  الاسم الكامل
+                  {pendingLinkProvider === 'facebook'
+                    ? 'رقم الجوال السعودي أو البريد الإلكتروني'
+                    : 'رقم الجوال السعودي المسجل'}
                 </label>
-                <div className="relative">
-                  <UserIcon
-                    size={16}
-                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[var(--color-muted)] pointer-events-none"
-                    aria-hidden="true"
-                  />
-                  <input
-                    id="auth-name"
-                    type="text"
-                    placeholder="مثال: عبدالله القحطاني أو مراح الخير"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    autoComplete="name"
-                    required
-                    className={`${fieldCls} pr-10`}
-                  />
-                </div>
-              </div>
-            )}
-
-            <div>
-              <div className="flex items-center justify-between gap-2 mb-1.5">
-                <label
-                  htmlFor="auth-phone"
-                  className="block text-xs font-semibold text-[var(--color-ink)]"
-                >
-                  رقم الجوال السعودي
-                </label>
-                {phoneTouched && phoneValid && (
-                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--color-green-ink)]">
-                    <CheckCircle2 size={13} aria-hidden="true" />
-                    <span>صيغة صحيحة</span>
-                  </span>
-                )}
-              </div>
-              <div className="relative">
-                <Phone
-                  size={16}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[var(--color-muted)] pointer-events-none"
-                  aria-hidden="true"
-                />
                 <input
-                  id="auth-phone"
-                  type="tel"
+                  id="link-account-identifier"
+                  type="text"
                   dir="ltr"
-                  placeholder="05XXXXXXXX"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  autoComplete="tel"
-                  inputMode="tel"
-                  aria-describedby="auth-phone-hint"
-                  aria-invalid={phoneTouched && !phoneValid ? true : undefined}
-                  required
-                  className={`${fieldCls} pr-10 text-right tabular-nums ${
-                    phoneTouched && !phoneValid
-                      ? 'border-red-400 focus:border-red-600'
-                      : ''
-                  }`}
+                  placeholder={pendingLinkProvider === 'facebook' ? '05XXXXXXXX أو name@example.com' : '05XXXXXXXX'}
+                  value={linkPhoneOrEmail}
+                  onChange={(e) => setLinkPhoneOrEmail(e.target.value)}
+                  className={`${fieldCls} text-right`}
                 />
               </div>
-              <p
-                id="auth-phone-hint"
-                className={`mt-1.5 text-[11px] leading-relaxed ${
-                  phoneTouched && !phoneValid
-                    ? 'text-red-700 dark:text-red-400 font-medium'
-                    : 'text-[var(--color-muted)]'
-                }`}
-              >
-                صيغة الجوال السعودي: 10 أرقام تبدأ بـ{' '}
-                <span className="tabular-nums font-semibold">05</span> (مثل{' '}
-                <span className="tabular-nums">0501234567</span> أو{' '}
-                <span className="tabular-nums" dir="ltr">
-                  +966501234567
-                </span>
-                ).
-              </p>
-            </div>
 
-            <div>
-              <label
-                htmlFor="auth-password"
-                className="block text-xs font-semibold text-[var(--color-ink)] mb-1.5"
-              >
-                كلمة المرور
-              </label>
-              <div className="relative">
-                <Lock
-                  size={16}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[var(--color-muted)] pointer-events-none"
-                  aria-hidden="true"
-                />
+              <div>
+                <label
+                  htmlFor="link-account-password"
+                  className="block text-xs font-semibold text-[var(--color-ink)] mb-1"
+                >
+                  كلمة المرور الحالية
+                </label>
                 <input
-                  id="auth-password"
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder={
-                    mode === 'register' ? '10 أحرف على الأقل' : 'أدخل كلمة المرور'
-                  }
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-                  minLength={mode === 'register' ? 10 : undefined}
-                  aria-describedby={mode === 'register' ? 'auth-password-hint' : undefined}
-                  required
-                  className={`${fieldCls} pr-10 pl-12`}
+                  id="link-account-password"
+                  type="password"
+                  value={linkPassword}
+                  onChange={(e) => setLinkPassword(e.target.value)}
+                  placeholder="أدخل كلمة مرور حسابك"
+                  className={fieldCls}
                 />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((prev) => !prev)}
-                  aria-label={showPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
-                  aria-pressed={showPassword}
-                  className="absolute left-1 top-1/2 -translate-y-1/2 w-10 h-9 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-ink)] hover:bg-[var(--color-cream)] flex items-center justify-center cursor-pointer focus-visible:outline-2 focus-visible:outline-[var(--color-gold)]"
-                >
-                  {showPassword ? (
-                    <EyeOff size={16} aria-hidden="true" />
-                  ) : (
-                    <Eye size={16} aria-hidden="true" />
-                  )}
-                </button>
               </div>
-              {mode === 'register' && (
-                <p
-                  id="auth-password-hint"
-                  className="mt-1.5 text-[11px] text-[var(--color-muted)]"
-                >
-                  10 أحرف على الأقل، وألا تكون رقم الجوال أو كلمة مرور شائعة.
-                </p>
-              )}
-            </div>
-
-            {mode === 'register' && (
-              <fieldset className="space-y-2.5 pt-1">
-                <legend className="text-xs font-semibold text-[var(--color-ink)] mb-1">
-                  اختر نوع الحساب ومزاياه
-                </legend>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <label
-                    htmlFor="role-buyer"
-                    className={`relative rounded-xl border p-4 cursor-pointer transition-colors flex flex-col gap-2.5 focus-within:ring-2 focus-within:ring-[var(--color-gold)] ${
-                      role === 'buyer'
-                        ? 'border-[var(--color-green-ink)] bg-[var(--color-cream)] ring-1 ring-[var(--color-green-ink)]'
-                        : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-cream)]/50'
-                    }`}
-                  >
-                    <input
-                      id="role-buyer"
-                      type="radio"
-                      name="account-role"
-                      value="buyer"
-                      checked={role === 'buyer'}
-                      onChange={() => setRole('buyer')}
-                      className="sr-only"
-                    />
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="inline-flex items-center gap-2 font-display text-sm font-bold text-[var(--color-ink)]">
-                        <span className="w-7 h-7 rounded-lg bg-[var(--color-green)]/10 text-[var(--color-green-ink)] flex items-center justify-center shrink-0">
-                          <ShoppingBag size={14} aria-hidden="true" />
-                        </span>
-                        <span>حساب مشتري</span>
-                      </span>
-                      {role === 'buyer' && (
-                        <Check
-                          size={16}
-                          className="text-[var(--color-green-ink)] shrink-0"
-                          aria-hidden="true"
-                        />
-                      )}
-                    </div>
-                    <ul className="space-y-1 text-[11px] text-[var(--color-muted)] leading-relaxed">
-                      <li>· عرض أرقام التواصل والواتساب للمربين</li>
-                      <li>· تقديم عروض السوم والمراسلة المباشرة</li>
-                      <li>· حفظ المفضلة والإعجاب وتقييم المربين</li>
-                    </ul>
-                  </label>
-
-                  <label
-                    htmlFor="role-seller"
-                    className={`relative rounded-xl border p-4 cursor-pointer transition-colors flex flex-col gap-2.5 focus-within:ring-2 focus-within:ring-[var(--color-gold)] ${
-                      role === 'seller'
-                        ? 'border-[var(--color-green-ink)] bg-[var(--color-cream)] ring-1 ring-[var(--color-green-ink)]'
-                        : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-cream)]/50'
-                    }`}
-                  >
-                    <input
-                      id="role-seller"
-                      type="radio"
-                      name="account-role"
-                      value="seller"
-                      checked={role === 'seller'}
-                      onChange={() => setRole('seller')}
-                      className="sr-only"
-                    />
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="inline-flex items-center gap-2 font-display text-sm font-bold text-[var(--color-ink)]">
-                        <span className="w-7 h-7 rounded-lg bg-[var(--color-gold)]/20 text-[var(--color-gold)] flex items-center justify-center shrink-0">
-                          <Store size={14} aria-hidden="true" />
-                        </span>
-                        <span>حساب مربي / بائع</span>
-                      </span>
-                      {role === 'seller' && (
-                        <Check
-                          size={16}
-                          className="text-[var(--color-green-ink)] shrink-0"
-                          aria-hidden="true"
-                        />
-                      )}
-                    </div>
-                    <ul className="space-y-1 text-[11px] text-[var(--color-muted)] leading-relaxed">
-                      <li>· نشر إعلانات المواشي مع الصور والفيديو</li>
-                      <li>· صفحة مراح عامة وطلب شارة «مربي موثق»</li>
-                      <li>· إدارة السوم والمحادثات ولوحة الأداء</li>
-                    </ul>
-                  </label>
-                </div>
-              </fieldset>
-            )}
-
-            <button
-              type="submit"
-              disabled={busy || googleBusy || linkBusy}
-              className="w-full min-h-[44px] h-11 rounded-xl bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] disabled:opacity-60 text-white text-sm font-semibold cursor-pointer transition-colors"
-            >
-              {busy
-                ? 'جاري التنفيذ...'
-                : mode === 'login'
-                ? 'دخول إلى الحساب'
-                : 'إنشاء الحساب والمتابعة'}
-            </button>
-
-            <div className="pt-3 border-t border-[var(--color-border)] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
-              <span className="inline-flex items-center gap-1.5 text-[var(--color-muted)]">
-                <ShieldCheck
-                  size={15}
-                  className="text-[var(--color-green-ink)] shrink-0"
-                  aria-hidden="true"
-                />
-                <span>جلسة محمية ومشفرة لخصوصية بياناتك</span>
-              </span>
 
               <button
-                type="button"
-                onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}
-                className="min-h-[36px] font-semibold text-[var(--color-green-ink)] hover:underline cursor-pointer text-right sm:text-left"
+                type="submit"
+                disabled={linkBusy}
+                className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] disabled:opacity-60 text-white text-sm font-bold inline-flex items-center justify-center gap-2 cursor-pointer transition-colors"
               >
-                {mode === 'login'
-                  ? 'ليس لديك حساب؟ أنشئ حساباً جديداً'
-                  : 'لديك حساب بالفعل؟ سجّل الدخول'}
+                {linkBusy && <Loader2 size={16} className="animate-spin" aria-hidden="true" />}
+                <span>
+                  {linkBusy
+                    ? 'جاري تأكيد الربط...'
+                    : `تأكيد الملكية وربط حساب ${
+                        pendingLinkProvider === 'facebook' ? 'Facebook' : 'Google'
+                      }`}
+                </span>
               </button>
-            </div>
-          </form>
+            </form>
+          ) : (
+            <>
+              {/* Primary Credentials Form (Celebim-first layout) */}
+              <form onSubmit={submit} className="space-y-4" noValidate>
+                {/* REGISTER FIELDS */}
+                {mode === 'register' && (
+                  <>
+                    {/* First Name + Last Name (2-column row inspired by Celebim) */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label
+                          htmlFor="auth-name"
+                          className="block text-xs font-bold text-[var(--color-ink)] mb-1.5"
+                        >
+                          الاسم الأول <span className="text-red-500">*</span>
+                        </label>
+                        <div className="relative">
+                          <UserIcon
+                            size={15}
+                            className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[var(--color-muted)] pointer-events-none"
+                            aria-hidden="true"
+                          />
+                          <input
+                            id="auth-name"
+                            type="text"
+                            autoComplete="given-name"
+                            placeholder="مثال: فهد"
+                            value={firstName}
+                            onChange={(e) => setFirstName(e.target.value)}
+                            required
+                            className={`${fieldCls} pr-10`}
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="auth-last-name"
+                          className="block text-xs font-bold text-[var(--color-ink)] mb-1.5"
+                        >
+                          اسم العائلة <span className="text-red-500">*</span>
+                        </label>
+                        <div className="relative">
+                          <UserIcon
+                            size={15}
+                            className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[var(--color-muted)] pointer-events-none"
+                            aria-hidden="true"
+                          />
+                          <input
+                            id="auth-last-name"
+                            type="text"
+                            autoComplete="family-name"
+                            placeholder="مثال: الدوسري"
+                            value={lastName}
+                            onChange={(e) => setLastName(e.target.value)}
+                            required
+                            className={`${fieldCls} pr-10`}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Email field (optional, supports email login) */}
+                    <div>
+                      <label
+                        htmlFor="auth-register-email"
+                        className="block text-xs font-bold text-[var(--color-ink)] mb-1.5"
+                      >
+                        البريد الإلكتروني{' '}
+                        <span className="font-normal text-[var(--color-muted)]">(اختياري للدخول بالبريد)</span>
+                      </label>
+                      <div className="relative">
+                        <Mail
+                          size={15}
+                          className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[var(--color-muted)] pointer-events-none"
+                          aria-hidden="true"
+                        />
+                        <input
+                          id="auth-register-email"
+                          type="email"
+                          dir="ltr"
+                          autoComplete="email"
+                          placeholder="name@example.com"
+                          value={registerEmail}
+                          onChange={(e) => setRegisterEmail(e.target.value)}
+                          className={`${fieldCls} pr-10 text-right`}
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* LOGIN METHOD SWITCHER (Phone vs Email - segmented tabs like Celebim Telefon / Email) */}
+                {mode === 'login' && (
+                  <div
+                    role="radiogroup"
+                    aria-label="طريقة تسجيل الدخول"
+                    className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-[var(--color-cream)] border border-[var(--color-border)]"
+                  >
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={loginMethod === 'phone'}
+                      onClick={() => {
+                        setLoginMethod('phone');
+                        setError('');
+                      }}
+                      className={`min-h-[40px] px-3 rounded-lg text-xs sm:text-sm font-bold inline-flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                        loginMethod === 'phone'
+                          ? 'bg-[var(--color-surface)] text-[var(--color-green-ink)] shadow-sm'
+                          : 'text-[var(--color-muted)] hover:text-[var(--color-ink)]'
+                      }`}
+                    >
+                      <Phone size={14} aria-hidden="true" />
+                      <span>رقم الجوال</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={loginMethod === 'email'}
+                      onClick={() => {
+                        setLoginMethod('email');
+                        setError('');
+                      }}
+                      className={`min-h-[40px] px-3 rounded-lg text-xs sm:text-sm font-bold inline-flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                        loginMethod === 'email'
+                          ? 'bg-[var(--color-surface)] text-[var(--color-green-ink)] shadow-sm'
+                          : 'text-[var(--color-muted)] hover:text-[var(--color-ink)]'
+                      }`}
+                    >
+                      <Mail size={14} aria-hidden="true" />
+                      <span>البريد الإلكتروني</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* PHONE INPUT (Always in register; or in login when loginMethod === 'phone') */}
+                {(mode === 'register' || loginMethod === 'phone') && (
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label
+                        htmlFor="auth-phone"
+                        className="text-xs font-bold text-[var(--color-ink)]"
+                      >
+                        رقم الجوال السعودي <span className="text-red-500">*</span>
+                      </label>
+                      {phoneTouched && (
+                        <span
+                          className={`text-[11px] font-bold inline-flex items-center gap-1 ${
+                            phoneValid
+                              ? 'text-emerald-700 dark:text-emerald-400'
+                              : 'text-amber-600 dark:text-amber-400'
+                          }`}
+                        >
+                          {phoneValid ? (
+                            <>
+                              <CheckCircle2 size={12} aria-hidden="true" />
+                              <span>صيغة صحيحة ({normalizedPhone})</span>
+                            </>
+                          ) : (
+                            'يبدأ بـ 05 ويتكون من 10 أرقام'
+                          )}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <div className="relative flex-1 min-w-0">
+                        <Phone
+                          size={15}
+                          className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[var(--color-muted)] pointer-events-none"
+                          aria-hidden="true"
+                        />
+                        <input
+                          id="auth-phone"
+                          type="tel"
+                          inputMode="tel"
+                          dir="ltr"
+                          autoComplete="tel"
+                          placeholder="05XXXXXXXX"
+                          aria-describedby="auth-phone-hint"
+                          value={phone}
+                          onChange={(e) => setPhone(e.target.value)}
+                          required
+                          className={`${fieldCls} pr-10 text-right tabular-nums`}
+                        />
+                      </div>
+                      <SaudiFlagPrefix />
+                    </div>
+
+                    <p id="auth-phone-hint" className="mt-1 text-[11px] text-[var(--color-muted)]">
+                      يدعم الصيغ السعودية: 05XXXXXXXX أو 5XXXXXXXX أو +966 5XXXXXXXX.
+                    </p>
+                  </div>
+                )}
+
+                {/* EMAIL LOGIN INPUT */}
+                {mode === 'login' && loginMethod === 'email' && (
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label
+                        htmlFor="auth-login-email"
+                        className="text-xs font-bold text-[var(--color-ink)]"
+                      >
+                        البريد الإلكتروني <span className="text-red-500">*</span>
+                      </label>
+                      {loginEmail.trim().length > 0 && (
+                        <span
+                          className={`text-[11px] font-bold ${
+                            loginEmailValid
+                              ? 'text-emerald-700 dark:text-emerald-400'
+                              : 'text-amber-600 dark:text-amber-400'
+                          }`}
+                        >
+                          {loginEmailValid ? 'بريد صحيح' : 'أدخل بريداً إلكترونياً صحيحاً'}
+                        </span>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <Mail
+                        size={15}
+                        className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[var(--color-muted)] pointer-events-none"
+                        aria-hidden="true"
+                      />
+                      <input
+                        id="auth-login-email"
+                        type="email"
+                        dir="ltr"
+                        autoComplete="email"
+                        placeholder="name@example.com"
+                        value={loginEmail}
+                        onChange={(e) => setLoginEmail(e.target.value)}
+                        required
+                        className={`${fieldCls} pr-10 text-right`}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* PASSWORD INPUT */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label
+                      htmlFor="auth-password"
+                      className="text-xs font-bold text-[var(--color-ink)]"
+                    >
+                      كلمة المرور <span className="text-red-500">*</span>
+                    </label>
+                    {mode === 'login' && (
+                      <button
+                        type="button"
+                        onClick={() => setForgotPasswordOpen((v) => !v)}
+                        className="text-[11px] font-bold text-[var(--color-green-ink)] hover:underline inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <HelpCircle size={12} aria-hidden="true" />
+                        <span>نسيت كلمة المرور؟</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="relative">
+                    <Lock
+                      size={15}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[var(--color-muted)] pointer-events-none"
+                      aria-hidden="true"
+                    />
+                    <input
+                      id="auth-password"
+                      type={showPassword ? 'text' : 'password'}
+                      autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+                      placeholder={mode === 'register' ? '10 أحرف على الأقل' : 'أدخل كلمة المرور'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                      className={`${fieldCls} pr-10 pl-12`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      aria-label={showPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                      aria-pressed={showPassword}
+                      className="absolute left-1 top-1/2 -translate-y-1/2 min-w-[44px] min-h-[40px] flex items-center justify-center rounded-lg text-[var(--color-muted)] hover:text-[var(--color-ink)] cursor-pointer"
+                    >
+                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+
+                  {/* Password Recovery Inline Guidance */}
+                  {mode === 'login' && forgotPasswordOpen && (
+                    <div className="mt-2 p-3 rounded-xl border border-[var(--color-gold)]/45 bg-[var(--color-cream)]/60 text-xs text-[var(--color-ink)] space-y-1 leading-relaxed">
+                      <p className="font-bold text-[var(--color-green-ink)]">
+                        خيارات استعادة الوصول إلى حسابك:
+                      </p>
+                      <p className="text-[var(--color-muted)]">
+                        إذا ربطت حسابك سابقاً بـ Google أو Facebook يمكنك الدخول عبر خيارات الدخول الإضافية بالأسفل، أو التواصل مع الدعم الفني عبر صفحة «تواصل معنا» لاستعادة الوصول.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Password Strength Meter (Register Mode) */}
+                  {mode === 'register' && passwordStrength && passwordStrength.score > 0 && (
+                    <div className="mt-2 space-y-1.5" aria-live="polite">
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {[1, 2, 3, 4].map((step) => (
+                          <span
+                            key={step}
+                            className={`h-1.5 rounded-full transition-colors ${
+                              passwordStrength.score >= step
+                                ? passwordStrength.barColor
+                                : 'bg-[var(--color-border)]'
+                            }`}
+                          />
+                        ))}
+                      </div>
+                      <p className={`text-[11px] font-semibold ${passwordStrength.textColor}`}>
+                        قوة كلمة المرور: {passwordStrength.label}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* LEGAL CONSENT CHECKBOXES (Celebim-style bordered panel on Register Mode) */}
+                {mode === 'register' && (
+                  <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-cream)]/45 p-3.5 space-y-2.5">
+                    <label className="flex items-start gap-2.5 cursor-pointer text-xs text-[var(--color-ink)] leading-relaxed">
+                      <input
+                        id="auth-accept-terms"
+                        type="checkbox"
+                        checked={acceptedTerms}
+                        onChange={(e) => setAcceptedTerms(e.target.checked)}
+                        className="mt-0.5 w-4 h-4 rounded border-[var(--color-border)] accent-[var(--color-green)] cursor-pointer shrink-0"
+                      />
+                      <span>
+                        أوافق على{' '}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            setTermsPreviewOpen((v) => !v);
+                          }}
+                          className="font-bold text-[var(--color-green-ink)] underline hover:opacity-80 cursor-pointer"
+                        >
+                          شروط الاستخدام وسياسة الخصوصية
+                        </button>{' '}
+                        الخاصة بسوق الغنم 2.0 <span className="text-red-500">*</span>
+                      </span>
+                    </label>
+
+                    {termsPreviewOpen && (
+                      <div className="p-2.5 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-[11px] text-[var(--color-muted)] leading-relaxed">
+                        تلتزم منصة سوق الغنم بحماية بياناتك وعدم مشاركة رقم جوالك إلا مع المستخدمين المسجلين عند طلب التواصل، مع خضوع جميع الإعلانات لمراجعة الإدارة لضمان المصداقية.
+                      </div>
+                    )}
+
+                    <label className="flex items-start gap-2.5 cursor-pointer text-xs text-[var(--color-muted)] leading-relaxed">
+                      <input
+                        id="auth-accept-alerts"
+                        type="checkbox"
+                        checked={acceptedAlerts}
+                        onChange={(e) => setAcceptedAlerts(e.target.checked)}
+                        className="mt-0.5 w-4 h-4 rounded border-[var(--color-border)] accent-[var(--color-green)] cursor-pointer shrink-0"
+                      />
+                      <span>أرغب بتلقي تنبيهات الأسعار الموسمية وعروض المربين الموثقين (اختياري)</span>
+                    </label>
+                  </div>
+                )}
+
+                {/* SUBMIT CTA */}
+                <button
+                  type="submit"
+                  disabled={busy || socialBusy || linkBusy}
+                  className="w-full min-h-[46px] py-2.5 px-4 rounded-xl bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] disabled:opacity-60 text-white text-sm font-extrabold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-sm"
+                >
+                  {busy && <Loader2 size={16} className="animate-spin" aria-hidden="true" />}
+                  <span>
+                    {busy
+                      ? mode === 'login'
+                        ? 'جاري تسجيل الدخول...'
+                        : 'جاري إنشاء الحساب...'
+                      : mode === 'login'
+                      ? 'تسجيل الدخول'
+                      : 'إنشاء الحساب والبدء الآن'}
+                  </span>
+                </button>
+              </form>
+
+              {/* Extra Social Sign-In / Sign-Up Options at Bottom (Google + Facebook) */}
+              <div className="space-y-2.5 pt-1">
+                <div className="relative py-1 flex items-center" role="separator">
+                  <div className="flex-1 border-t border-[var(--color-border)]" />
+                  <span className="px-3 text-[11px] font-semibold text-[var(--color-muted)]">
+                    {mode === 'login' ? 'أو خيارات دخول إضافية' : 'أو التسجيل السريع عبر'}
+                  </span>
+                  <div className="flex-1 border-t border-[var(--color-border)]" />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    disabled={busy || socialBusy || linkBusy}
+                    onClick={handleGoogleContinue}
+                    aria-label={
+                      mode === 'register' ? 'إنشاء حساب عبر Google' : 'المتابعة باستخدام Google'
+                    }
+                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-cream)]/75 hover:border-[var(--color-green-ink)]/45 disabled:opacity-60 text-[var(--color-ink)] text-xs sm:text-sm font-bold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                  >
+                    {googleBusy ? (
+                      <Loader2 size={16} className="animate-spin text-[var(--color-green-ink)]" aria-hidden="true" />
+                    ) : (
+                      <GoogleOfficialLogo />
+                    )}
+                    <span>{googleBusy ? 'جاري التحقق...' : 'المتابعة عبر Google'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={busy || socialBusy || linkBusy}
+                    onClick={handleFacebookContinue}
+                    aria-label={
+                      mode === 'register'
+                        ? 'إنشاء حساب عبر Facebook'
+                        : 'المتابعة باستخدام Facebook'
+                    }
+                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl bg-[#1877F2] hover:bg-[#166FE5] disabled:opacity-60 text-white text-xs sm:text-sm font-bold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-sm"
+                  >
+                    {facebookBusy ? (
+                      <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                    ) : (
+                      <FacebookOfficialLogo />
+                    )}
+                    <span>{facebookBusy ? 'جاري التحقق...' : 'المتابعة عبر Facebook'}</span>
+                  </button>
+                </div>
+
+                {showOfficialGisFallback && isGoogleReady && (
+                  <div className="pt-1 flex flex-col items-center gap-1.5">
+                    <div
+                      ref={officialGisContainerRef}
+                      className="min-h-[44px] flex items-center justify-center w-full"
+                    />
+                    <p className="text-[11px] text-[var(--color-muted)] text-center">
+                      اختر حساب Google عبر الزر الرسمي أعلاه للمتابعة الآمنة.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer Toggle Prompt */}
+              <div className="pt-2 border-t border-[var(--color-border)] text-center text-xs sm:text-sm text-[var(--color-muted)]">
+                {mode === 'login' ? (
+                  <p>
+                    ليس لديك حساب؟{' '}
+                    <button
+                      type="button"
+                      onClick={() => switchMode('register')}
+                      className="font-extrabold text-[var(--color-green-ink)] hover:underline cursor-pointer"
+                    >
+                      أنشئ حساباً جديداً
+                    </button>
+                  </p>
+                ) : (
+                  <p>
+                    لديك حساب بالفعل؟{' '}
+                    <button
+                      type="button"
+                      onClick={() => switchMode('login')}
+                      className="font-extrabold text-[var(--color-green-ink)] hover:underline cursor-pointer"
+                    >
+                      سجّل الدخول
+                    </button>
+                  </p>
+                )}
+              </div>
+            </>
+          )}
         </div>
+      </div>
 
-        {/* Marketplace Trust & Safety Side Panel */}
-        <aside
-          aria-label="مزايا الحساب في سوق الغنم"
-          className="lg:col-span-5 bg-[var(--color-cream)] rounded-2xl border border-[var(--color-border)] p-6 sm:p-8 space-y-6"
-        >
-          <div className="space-y-2">
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-xs font-bold text-[var(--color-green-ink)]">
-              <ShieldCheck size={14} aria-hidden="true" />
-              <span>سوق الغنم 2.0</span>
-            </span>
-            <h2 className="font-display text-xl font-extrabold text-[var(--color-ink)]">
-              تعامل موثوق وبيانات منظمة للحلال في المملكة
-            </h2>
-            <p className="text-xs sm:text-sm text-[var(--color-muted)] leading-relaxed">
-              تتيح لك العضوية تجربة متكاملة لبيع وشراء الأغنام والماعز والإبل بشفافية ووضوح عبر جميع مناطق المملكة.
-            </p>
-          </div>
-
-          <div className="space-y-3.5 pt-2 border-t border-[var(--color-border)]">
-            <div className="flex items-start gap-3">
-              <div className="w-9 h-9 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-green-ink)] flex items-center justify-center shrink-0">
-                <ShieldCheck size={17} aria-hidden="true" />
-              </div>
-              <div className="min-w-0">
-                <p className="font-display text-sm font-bold text-[var(--color-ink)]">
-                  مربون موثقون ومراحات معتمدة
-                </p>
-                <p className="text-xs text-[var(--color-muted)] leading-relaxed mt-0.5">
-                  مراجعة إدارية لطلبات التوثيق وإبراز المراحات المعتمدة بشارة التوثيق.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-start gap-3">
-              <div className="w-9 h-9 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-gold)] flex items-center justify-center shrink-0">
-                <MessageSquare size={17} aria-hidden="true" />
-              </div>
-              <div className="min-w-0">
-                <p className="font-display text-sm font-bold text-[var(--color-ink)]">
-                  محادثات فورية وعروض سوم منظمة
-                </p>
-                <p className="text-xs text-[var(--color-muted)] leading-relaxed mt-0.5">
-                  تواصل مباشر داخل المنصة مع إشعارات فورية لمتابعة السوم والردود دون تعقيد.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-start gap-3">
-              <div className="w-9 h-9 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-green-ink)] flex items-center justify-center shrink-0">
-                <Lock size={17} aria-hidden="true" />
-              </div>
-              <div className="min-w-0">
-                <p className="font-display text-sm font-bold text-[var(--color-ink)]">
-                  حماية الخصوصية ورقم التواصل
-                </p>
-                <p className="text-xs text-[var(--color-muted)] leading-relaxed mt-0.5">
-                  لا تُكشف أرقام الاتصال المباشر للزوار غير المسجلين وتخضع الجلسات لحماية مشفرة.
-                </p>
-              </div>
-            </div>
-          </div>
-        </aside>
-        </div>
+      {/* Compact Security & Platform Trust Strip Below Card */}
+      <div className="w-full max-w-[490px] mt-5 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[11px] font-semibold text-[var(--color-muted)] text-center">
+        <span className="inline-flex items-center gap-1.5">
+          <CheckCircle2 size={13} className="text-[var(--color-green-ink)]" aria-hidden="true" />
+          تشفير كلمات المرور Argon2id
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <CheckCircle2 size={13} className="text-[var(--color-green-ink)]" aria-hidden="true" />
+          حسابات ومراحات موثقة
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <CheckCircle2 size={13} className="text-[var(--color-green-ink)]" aria-hidden="true" />
+          عمولة 0% خلال فترة التأسيس
+        </span>
       </div>
     </section>
   );
 }
-

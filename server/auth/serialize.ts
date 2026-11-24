@@ -2,7 +2,7 @@
 
 export function toSelfUser(
   user: any,
-  meta?: { googleLinked?: boolean; hasPassword?: boolean }
+  meta?: { googleLinked?: boolean; facebookLinked?: boolean; hasPassword?: boolean }
 ) {
   if (!user) return null;
   const phone = typeof user.phone === 'string' && user.phone.trim() ? user.phone.trim() : null;
@@ -17,6 +17,7 @@ export function toSelfUser(
     phoneVerified: Boolean(user.phoneVerifiedAt),
     needsPhoneCompletion: !phone,
     ...(typeof meta?.googleLinked === 'boolean' ? { googleLinked: meta.googleLinked } : {}),
+    ...(typeof meta?.facebookLinked === 'boolean' ? { facebookLinked: meta.facebookLinked } : {}),
     ...(typeof meta?.hasPassword === 'boolean' ? { hasPassword: meta.hasPassword } : {}),
   };
 }

@@ -395,6 +395,10 @@ async function runServer(
           clientId: config.googleClientId || null,
           codeFlowEnabled: Boolean(config.googleClientId && config.googleClientSecret),
         },
+        facebookAuth: {
+          enabled: Boolean(config.facebookAppId && config.facebookAppSecret),
+          appId: config.facebookAppId || null,
+        },
       });
     })
   );

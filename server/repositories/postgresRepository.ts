@@ -33,6 +33,7 @@ import {
   createUserRecord,
 } from '../auth/accounts';
 import type { VerifiedGoogleClaims } from '../auth/google';
+import type { VerifiedFacebookClaims } from '../auth/facebook';
 import { DEMO_USER_IDS } from '../auth/migrate';
 import {
   canAccessConversation,
@@ -862,6 +863,17 @@ export class PostgresMarketplaceRepository implements MarketplaceRepository {
     return row ? mapDbUser(row) : undefined;
   }
 
+  async findUserByEmail(email: string) {
+    const emailLower = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    if (!emailLower) return undefined;
+    const [row] = await this.db
+      .select()
+      .from(users)
+      .where(sql`lower(${users.email}) = ${emailLower}`)
+      .limit(1);
+    return row ? mapDbUser(row) : undefined;
+  }
+
   async getCredential(userId: string): Promise<Credential | undefined> {
     const [row] = await this.db
       .select()
@@ -890,11 +902,30 @@ export class PostgresMarketplaceRepository implements MarketplaceRepository {
   async registerUser(params: {
     name: string;
     phone: string;
+    email?: string | null;
     role: 'buyer' | 'seller';
     passwordHash: string;
   }) {
+    const cleanEmail =
+      typeof params.email === 'string' && params.email.trim()
+        ? params.email.trim().toLowerCase().slice(0, 255)
+        : null;
     try {
       return await this.db.transaction(async (tx) => {
+        if (cleanEmail) {
+          const [emailMatch] = await tx
+            .select({ id: users.id })
+            .from(users)
+            .where(sql`lower(${users.email}) = ${cleanEmail}`)
+            .limit(1);
+          if (emailMatch) {
+            throw new RepositoryError(
+              409,
+              'البريد الإلكتروني مسجل مسبقاً، سجّل الدخول بدلاً من ذلك',
+              'email_exists'
+            );
+          }
+        }
         const now = new Date();
         const userId = `usr_${crypto.randomUUID().slice(0, 8)}`;
         const [insertedUser] = await tx
@@ -902,7 +933,7 @@ export class PostgresMarketplaceRepository implements MarketplaceRepository {
           .values({
             id: userId,
             phone: params.phone,
-            email: `${params.phone}@souqalghanam.sa`,
+            email: cleanEmail || `${params.phone}@souqalghanam.sa`,
             name: params.name,
             role: params.role,
             status: 'active',
@@ -951,6 +982,7 @@ export class PostgresMarketplaceRepository implements MarketplaceRepository {
         return { user: mapDbUser(insertedUser), seller };
       });
     } catch (err: any) {
+      if (err instanceof RepositoryError) throw err;
       if (isPgUniqueViolation(err)) {
         throw new RepositoryError(
           409,
@@ -962,13 +994,14 @@ export class PostgresMarketplaceRepository implements MarketplaceRepository {
     }
   }
 
-  async getUserAuthMeta(userId: string): Promise<{ googleLinked: boolean; hasPassword: boolean }> {
-    const [googleRow, credRow] = await Promise.all([
+  async getUserAuthMeta(
+    userId: string
+  ): Promise<{ googleLinked: boolean; facebookLinked: boolean; hasPassword: boolean }> {
+    const [identityRows, credRow] = await Promise.all([
       this.db
-        .select({ id: googleIdentities.id })
+        .select({ provider: googleIdentities.provider })
         .from(googleIdentities)
-        .where(and(eq(googleIdentities.userId, userId), eq(googleIdentities.provider, 'google')))
-        .limit(1),
+        .where(eq(googleIdentities.userId, userId)),
       this.db
         .select({ userId: userCredentials.userId })
         .from(userCredentials)
@@ -976,7 +1009,8 @@ export class PostgresMarketplaceRepository implements MarketplaceRepository {
         .limit(1),
     ]);
     return {
-      googleLinked: googleRow.length > 0,
+      googleLinked: identityRows.some((r) => r.provider === 'google'),
+      facebookLinked: identityRows.some((r) => r.provider === 'facebook'),
       hasPassword: credRow.length > 0,
     };
   }
@@ -987,6 +1021,16 @@ export class PostgresMarketplaceRepository implements MarketplaceRepository {
       .from(googleIdentities)
       .innerJoin(users, eq(googleIdentities.userId, users.id))
       .where(and(eq(googleIdentities.provider, 'google'), eq(googleIdentities.subject, subject)))
+      .limit(1);
+    return row ? mapDbUser(row.user) : undefined;
+  }
+
+  async findUserByFacebookSubject(subject: string) {
+    const [row] = await this.db
+      .select({ user: users })
+      .from(googleIdentities)
+      .innerJoin(users, eq(googleIdentities.userId, users.id))
+      .where(and(eq(googleIdentities.provider, 'facebook'), eq(googleIdentities.subject, subject)))
       .limit(1);
     return row ? mapDbUser(row.user) : undefined;
   }
@@ -1036,17 +1080,24 @@ export class PostgresMarketplaceRepository implements MarketplaceRepository {
             })
             .where(eq(googleIdentities.id, existingIdentity.id));
 
-          const [credRow] = await tx
-            .select({ userId: userCredentials.userId })
-            .from(userCredentials)
-            .where(eq(userCredentials.userId, userRow.id))
-            .limit(1);
+          const [identityRows, credRow] = await Promise.all([
+            tx
+              .select({ provider: googleIdentities.provider })
+              .from(googleIdentities)
+              .where(eq(googleIdentities.userId, userRow.id)),
+            tx
+              .select({ userId: userCredentials.userId })
+              .from(userCredentials)
+              .where(eq(userCredentials.userId, userRow.id))
+              .limit(1),
+          ]);
 
           return {
             user: mapDbUser(userRow),
             isNewUser: false,
             googleLinked: true,
-            hasPassword: Boolean(credRow),
+            facebookLinked: identityRows.some((r) => r.provider === 'facebook'),
+            hasPassword: Boolean(credRow.length > 0),
           };
         }
 
@@ -1136,6 +1187,7 @@ export class PostgresMarketplaceRepository implements MarketplaceRepository {
           user: mapDbUser(insertedUser),
           isNewUser: true,
           googleLinked: true,
+          facebookLinked: false,
           hasPassword: false,
         };
       });
@@ -1231,16 +1283,23 @@ export class PostgresMarketplaceRepository implements MarketplaceRepository {
           });
         }
 
-        const [credRow] = await tx
-          .select({ userId: userCredentials.userId })
-          .from(userCredentials)
-          .where(eq(userCredentials.userId, userRow.id))
-          .limit(1);
+        const [identityRows, credRow] = await Promise.all([
+          tx
+            .select({ provider: googleIdentities.provider })
+            .from(googleIdentities)
+            .where(eq(googleIdentities.userId, userRow.id)),
+          tx
+            .select({ userId: userCredentials.userId })
+            .from(userCredentials)
+            .where(eq(userCredentials.userId, userRow.id))
+            .limit(1),
+        ]);
 
         return {
           user: mapDbUser(userRow),
           googleLinked: true,
-          hasPassword: Boolean(credRow),
+          facebookLinked: identityRows.some((r) => r.provider === 'facebook'),
+          hasPassword: Boolean(credRow.length > 0),
         };
       });
     } catch (err: any) {
@@ -1250,6 +1309,287 @@ export class PostgresMarketplaceRepository implements MarketplaceRepository {
           409,
           'حساب Google هذا مرتبط بحساب آخر بالفعل',
           'google_subject_conflict'
+        );
+      }
+      throw err;
+    }
+  }
+
+  async authenticateWithFacebook(params: {
+    claims: VerifiedFacebookClaims;
+    role?: 'buyer' | 'seller';
+    mode?: 'login' | 'register';
+  }) {
+    const emailLower = params.claims.email ? params.claims.email.trim().toLowerCase() : '';
+    try {
+      return await this.db.transaction(async (tx) => {
+        const [existingIdentity] = await tx
+          .select()
+          .from(googleIdentities)
+          .where(
+            and(
+              eq(googleIdentities.provider, 'facebook'),
+              eq(googleIdentities.subject, params.claims.sub)
+            )
+          )
+          .limit(1);
+
+        if (existingIdentity) {
+          const [userRow] = await tx
+            .select()
+            .from(users)
+            .where(eq(users.id, existingIdentity.userId))
+            .limit(1);
+          if (!userRow) {
+            throw new RepositoryError(
+              404,
+              'الحساب المرتبط بهوية Facebook غير موجود',
+              'linked_user_missing'
+            );
+          }
+
+          const now = new Date();
+          await tx
+            .update(googleIdentities)
+            .set({
+              ...(emailLower ? { email: emailLower.slice(0, 255), emailVerified: params.claims.emailVerified } : {}),
+              name: params.claims.name.slice(0, 120),
+              pictureUrl: params.claims.picture || null,
+              updatedAt: now,
+            })
+            .where(eq(googleIdentities.id, existingIdentity.id));
+
+          const [identityRows, credRow] = await Promise.all([
+            tx
+              .select({ provider: googleIdentities.provider })
+              .from(googleIdentities)
+              .where(eq(googleIdentities.userId, userRow.id)),
+            tx
+              .select({ userId: userCredentials.userId })
+              .from(userCredentials)
+              .where(eq(userCredentials.userId, userRow.id))
+              .limit(1),
+          ]);
+
+          return {
+            user: mapDbUser(userRow),
+            isNewUser: false,
+            googleLinked: identityRows.some((r) => r.provider === 'google'),
+            facebookLinked: true,
+            hasPassword: Boolean(credRow.length > 0),
+          };
+        }
+
+        if (emailLower) {
+          const [emailMatch] = await tx
+            .select({ id: users.id })
+            .from(users)
+            .where(sql`lower(${users.email}) = ${emailLower}`)
+            .limit(1);
+
+          if (emailMatch) {
+            throw new RepositoryError(
+              409,
+              'يوجد حساب مسجل مسبقاً بهذا البريد الإلكتروني. أدخل بيانات حسابك الحالي لتأكيد ملكيته وربطه بحساب Facebook.',
+              'account_exists_link_required'
+            );
+          }
+        }
+
+        const now = new Date();
+        const role: 'buyer' | 'seller' = params.role === 'seller' ? 'seller' : 'buyer';
+        const draftUser = createUserRecord({
+          name: params.claims.name,
+          phone: null,
+          ...(emailLower ? { email: emailLower } : {}),
+          role,
+        });
+
+        const [insertedUser] = await tx
+          .insert(users)
+          .values({
+            id: draftUser.id,
+            phone: null,
+            email: draftUser.email.slice(0, 255),
+            name: draftUser.name.slice(0, 80),
+            role,
+            status: 'active',
+            isDemo: false,
+            phoneVerifiedAt: null,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning();
+
+        if (role === 'seller') {
+          const sellerDraft = buildSellerProfile({
+            id: insertedUser.id,
+            name: insertedUser.name,
+            phone: null,
+          });
+          await tx.insert(sellerProfiles).values({
+            userId: insertedUser.id,
+            displayName: sellerDraft.displayName.slice(0, 120),
+            bio: sellerDraft.bio,
+            regionId: sellerDraft.regionId,
+            city: sellerDraft.city,
+            phone: '',
+            whatsapp: '',
+            verificationStatus: 'Pending',
+            verifiedAt: null,
+            verificationNote: null,
+            verificationRequestedAt: now,
+            verificationReviewedAt: null,
+            yearsExperience: 3,
+            specialty: 'أغنام وماعز',
+            rating: '0',
+            ratingCount: 0,
+            totalSales: 0,
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
+
+        await tx.insert(googleIdentities).values({
+          id: `fbid_${crypto.randomUUID().slice(0, 10)}`,
+          userId: insertedUser.id,
+          provider: 'facebook',
+          subject: params.claims.sub,
+          email: (emailLower || draftUser.email).slice(0, 255),
+          emailVerified: Boolean(emailLower && params.claims.emailVerified),
+          name: params.claims.name.slice(0, 120),
+          pictureUrl: params.claims.picture || null,
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        return {
+          user: mapDbUser(insertedUser),
+          isNewUser: true,
+          googleLinked: false,
+          facebookLinked: true,
+          hasPassword: false,
+        };
+      });
+    } catch (err: any) {
+      if (err instanceof RepositoryError) throw err;
+      if (isPgUniqueViolation(err)) {
+        throw new RepositoryError(
+          409,
+          'تعذر إتمام المصادقة بسبب تعارض في بيانات الحساب، حاول مرة أخرى',
+          'account_conflict'
+        );
+      }
+      throw err;
+    }
+  }
+
+  async linkFacebookIdentity(params: { userId: string; claims: VerifiedFacebookClaims }) {
+    const emailLower = params.claims.email ? params.claims.email.trim().toLowerCase() : '';
+    try {
+      return await this.db.transaction(async (tx) => {
+        const [userRow] = await tx
+          .select()
+          .from(users)
+          .where(eq(users.id, params.userId))
+          .limit(1);
+        if (!userRow) {
+          throw new RepositoryError(404, 'الحساب غير موجود', 'user_not_found');
+        }
+        if (userRow.status !== 'active') {
+          throw new RepositoryError(403, 'هذا الحساب موقوف، تواصل مع إدارة المنصة', 'account_suspended');
+        }
+
+        const [bySub] = await tx
+          .select()
+          .from(googleIdentities)
+          .where(
+            and(
+              eq(googleIdentities.provider, 'facebook'),
+              eq(googleIdentities.subject, params.claims.sub)
+            )
+          )
+          .limit(1);
+        if (bySub && bySub.userId !== userRow.id) {
+          throw new RepositoryError(
+            409,
+            'حساب Facebook هذا مرتبط بحساب آخر بالفعل',
+            'facebook_subject_conflict'
+          );
+        }
+
+        const [byUser] = await tx
+          .select()
+          .from(googleIdentities)
+          .where(
+            and(
+              eq(googleIdentities.provider, 'facebook'),
+              eq(googleIdentities.userId, userRow.id)
+            )
+          )
+          .limit(1);
+        if (byUser && byUser.subject !== params.claims.sub) {
+          throw new RepositoryError(
+            409,
+            'هذا الحساب مرتبط بالفعل بحساب Facebook آخر',
+            'facebook_already_linked'
+          );
+        }
+
+        const resolvedEmail = (emailLower || userRow.email || '').slice(0, 255);
+        const now = new Date();
+        if (bySub) {
+          await tx
+            .update(googleIdentities)
+            .set({
+              email: resolvedEmail,
+              emailVerified: Boolean(emailLower && params.claims.emailVerified),
+              name: params.claims.name.slice(0, 120),
+              pictureUrl: params.claims.picture || null,
+              updatedAt: now,
+            })
+            .where(eq(googleIdentities.id, bySub.id));
+        } else {
+          await tx.insert(googleIdentities).values({
+            id: `fbid_${crypto.randomUUID().slice(0, 10)}`,
+            userId: userRow.id,
+            provider: 'facebook',
+            subject: params.claims.sub,
+            email: resolvedEmail,
+            emailVerified: Boolean(emailLower && params.claims.emailVerified),
+            name: params.claims.name.slice(0, 120),
+            pictureUrl: params.claims.picture || null,
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
+
+        const [identityRows, credRow] = await Promise.all([
+          tx
+            .select({ provider: googleIdentities.provider })
+            .from(googleIdentities)
+            .where(eq(googleIdentities.userId, userRow.id)),
+          tx
+            .select({ userId: userCredentials.userId })
+            .from(userCredentials)
+            .where(eq(userCredentials.userId, userRow.id))
+            .limit(1),
+        ]);
+
+        return {
+          user: mapDbUser(userRow),
+          googleLinked: identityRows.some((r) => r.provider === 'google'),
+          facebookLinked: true,
+          hasPassword: Boolean(credRow.length > 0),
+        };
+      });
+    } catch (err: any) {
+      if (err instanceof RepositoryError) throw err;
+      if (isPgUniqueViolation(err)) {
+        throw new RepositoryError(
+          409,
+          'حساب Facebook هذا مرتبط بحساب آخر بالفعل',
+          'facebook_subject_conflict'
         );
       }
       throw err;
@@ -1344,12 +1684,11 @@ export class PostgresMarketplaceRepository implements MarketplaceRepository {
           });
         }
 
-        const [googleRow, credRow] = await Promise.all([
+        const [identityRows, credRow] = await Promise.all([
           tx
-            .select({ id: googleIdentities.id })
+            .select({ provider: googleIdentities.provider })
             .from(googleIdentities)
-            .where(and(eq(googleIdentities.userId, userRow.id), eq(googleIdentities.provider, 'google')))
-            .limit(1),
+            .where(eq(googleIdentities.userId, userRow.id)),
           tx
             .select({ userId: userCredentials.userId })
             .from(userCredentials)
@@ -1359,8 +1698,9 @@ export class PostgresMarketplaceRepository implements MarketplaceRepository {
 
         return {
           user: mapDbUser(updatedUser),
-          googleLinked: googleRow.length > 0,
-          hasPassword: credRow.length > 0,
+          googleLinked: identityRows.some((r) => r.provider === 'google'),
+          facebookLinked: identityRows.some((r) => r.provider === 'facebook'),
+          hasPassword: Boolean(credRow.length > 0),
         };
       });
     } catch (err: any) {
@@ -4286,14 +4626,6 @@ export class PostgresMarketplaceRepository implements MarketplaceRepository {
       let resultRow: typeof sellerProfiles.$inferSelect;
 
       if (!seller) {
-        const [hasListing] = await tx
-          .select({ id: listings.id })
-          .from(listings)
-          .where(eq(listings.sellerId, currentUser.id))
-          .limit(1);
-        if (currentUser.role !== 'seller' && !hasListing) {
-          throw new RepositoryError(403, 'طلب التوثيق متاح لحسابات البائعين والمربين فقط');
-        }
         const [inserted] = await tx
           .insert(sellerProfiles)
           .values({

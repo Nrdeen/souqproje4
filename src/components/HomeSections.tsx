@@ -107,7 +107,7 @@ export function HomeStatsStrip({
   return (
     <section
       aria-label={isEn ? 'Live marketplace indicators' : 'مؤشرات السوق المباشرة'}
-      className="bg-[var(--color-canvas)] pb-6 sm:pb-8 border-b border-[var(--color-border)]/70"
+      className="bg-[var(--color-canvas)] pb-4 sm:pb-5 border-b border-[var(--color-border)]/70"
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">

@@ -10,7 +10,7 @@ export interface Credential {
 export interface GoogleIdentityRecord {
   id: string;
   userId: string;
-  provider: 'google';
+  provider: 'google' | 'facebook';
   subject: string;
   email: string;
   emailVerified: boolean;

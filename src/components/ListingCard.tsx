@@ -1,21 +1,29 @@
 import {
+  ArrowLeft,
+  ArrowRight,
+  Award,
+  Check,
   CheckCircle2,
   Clock,
   Heart,
   MapPin,
+  Phone,
   Play,
   ShieldCheck,
   Sparkles,
   Star,
+  Tag,
   ThumbsUp,
   User as UserIcon,
   XCircle,
+  Zap,
 } from 'lucide-react';
 import type { Breed, Category, Listing, Region, SellerProfile } from '../types/marketplace';
 import { formatPriceSar, formatRelativeArabicTime } from '../lib/format';
 import { useI18n } from '../lib/i18n';
 import { trBreedName, trCategoryName, trCityName, trRegionName } from '../lib/bilingual';
 import {
+  buildSellerContactLinks,
   resolveListingStatusBadge,
   type ListingStatusBadgeKind,
 } from '../lib/marketplace-helpers';
@@ -31,6 +39,8 @@ interface ListingCardProps {
   seller?: SellerProfile;
   isFavorite: boolean;
   isLiked?: boolean;
+  currentUserId?: string | null;
+  variant?: 'default' | 'showcase';
   onSelect: (listing: Listing) => void;
   onSelectSeller?: (sellerId: string) => void;
   onToggleFavorite: (listingId: string) => void;
@@ -71,6 +81,8 @@ export function ListingCard({
   seller,
   isFavorite,
   isLiked = false,
+  currentUserId = null,
+  variant = 'default',
   onSelect,
   onSelectSeller,
   onToggleFavorite,
@@ -104,6 +116,448 @@ export function ListingCard({
     .join(' — ');
 
   const statusBadge = resolveListingStatusBadge(listing, { lang });
+
+  if (variant === 'showcase') {
+    const isFeaturedShowcase = listing.isFeatured && !isSold;
+    const isNewShowcase = statusBadge?.kind === 'new';
+    const categoryLabel = category
+      ? trCategoryName(category.name, lang)
+      : isEn
+      ? 'Livestock'
+      : 'مواشي';
+    const breedLabel = breed
+      ? trBreedName(breed.name, lang)
+      : isEn
+      ? 'Saudi Sheep'
+      : 'أغنام سعودية';
+    const regionLabel = trRegionName(region?.name, lang);
+    const cityLabel = trCityName(listing.city, lang);
+    const compactLocation = [regionLabel, cityLabel].filter(Boolean).join(' / ');
+    const sellerName = seller?.displayName || (isEn ? 'Seller' : 'مربٍّ');
+    const sellerInitials = sellerName
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((part) => part.charAt(0))
+      .join('')
+      .toUpperCase();
+    const sellerVerified = seller ? isSellerVerified(seller) : false;
+    const contactLinks = buildSellerContactLinks({
+      isSignedIn: Boolean(currentUserId),
+      isOwner: Boolean(currentUserId && currentUserId === listing.sellerId),
+      seller,
+      listingTitle: listing.title,
+      lang,
+    });
+    const DirArrow = isEn ? ArrowRight : ArrowLeft;
+
+    return (
+      <>
+        {/* Mobile Compact Horizontal Card */}
+        <div className="sm:hidden">
+          <article
+            className={`relative overflow-hidden rounded-xl border bg-[var(--color-surface)] transition-colors ${
+              isFeaturedShowcase
+                ? 'border-[var(--color-gold)] shadow-[0_6px_18px_-10px_rgba(199,154,67,0.28)]'
+                : 'border-[var(--color-border)]'
+            } ${isSold ? 'opacity-90' : ''}`}
+          >
+            {isFeaturedShowcase && (
+              <div className="flex h-6 items-center gap-1.5 bg-[var(--color-green)] px-2.5 text-[10px] font-extrabold text-white">
+                <Zap size={13} className="text-[#F4C569] shrink-0" aria-hidden="true" />
+                <span>{isEn ? 'Featured Listing' : 'إعلان مميز'}</span>
+              </div>
+            )}
+
+            <div className="flex min-h-[120px]">
+              <div className="relative w-[34%] max-w-[120px] shrink-0 bg-[var(--color-cream)]/70 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => onSelect(listing)}
+                  aria-label={
+                    isEn ? `View details for ${listing.title}` : `عرض تفاصيل ${listing.title}`
+                  }
+                  className="w-full h-full block cursor-pointer"
+                >
+                  <SafeImage
+                    src={coverImage}
+                    alt={listing.title}
+                    width={320}
+                    height={240}
+                    loading="lazy"
+                    decoding="async"
+                    className={`w-full h-full object-cover ${isSold ? 'grayscale-[30%]' : ''}`}
+                  />
+                </button>
+                <span className="pointer-events-none absolute bottom-1.5 start-1.5 max-w-[calc(100%-0.75rem)] truncate rounded bg-[var(--color-green)]/92 px-1.5 py-0.5 text-[9px] font-bold text-white">
+                  {isSold ? (isEn ? 'Sold' : 'مباع') : categoryLabel}
+                </span>
+              </div>
+
+              <div className="flex min-w-0 flex-1 flex-col px-2.5 py-2">
+                <div className="flex min-w-0 items-start justify-between gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => onSelect(listing)}
+                    className="line-clamp-2 min-w-0 text-start text-[12px] font-bold leading-[1.35] text-[var(--color-ink)] hover:text-[var(--color-green-ink)] cursor-pointer"
+                  >
+                    {listing.title}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleFavorite(listing.id);
+                    }}
+                    aria-label={
+                      isFavorite
+                        ? isEn
+                          ? 'Remove from favorites'
+                          : 'إزالة من المفضلة'
+                        : isEn
+                        ? 'Add to favorites'
+                        : 'إضافة إلى المفضلة'
+                    }
+                    aria-pressed={isFavorite}
+                    className={`relative z-20 -mt-0.5 -me-0.5 w-8 h-8 rounded-full flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
+                      isFavorite
+                        ? 'bg-red-50 dark:bg-red-950/50 text-red-500'
+                        : 'bg-[var(--color-cream)]/80 text-[var(--color-muted)] hover:text-red-500'
+                    }`}
+                  >
+                    <Heart size={15} fill={isFavorite ? 'currentColor' : 'none'} aria-hidden="true" />
+                  </button>
+                </div>
+
+                <span className="mt-0.5 truncate text-[10px] text-[var(--color-muted)] tabular-nums">
+                  {breedLabel}
+                  {listing.weightKg > 0
+                    ? ` · ${listing.weightKg} ${isEn ? 'kg' : 'كجم'}`
+                    : ` · ${listing.ageMonths} ${isEn ? 'mo' : 'أشهر'}`}
+                </span>
+
+                <div className="mt-auto min-w-0 space-y-0.5 pt-1.5">
+                  <span className="flex min-w-0 items-center gap-1 text-[10px] text-[var(--color-muted)]">
+                    <MapPin size={11} className="shrink-0" aria-hidden="true" />
+                    <span className="truncate">{compactLocation || locationText}</span>
+                  </span>
+                  <strong className="block whitespace-nowrap text-[14px] font-black leading-5 text-[var(--color-ink)] tabular-nums">
+                    {formatPriceSar(listing.priceAmount, lang)}
+                  </strong>
+                </div>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        {/* Desktop & Tablet Celebim Showcase Card */}
+        <div
+          className={
+            isFeaturedShowcase
+              ? 'hidden h-full flex-col overflow-hidden rounded-[14px] border-2 border-[var(--color-gold)] bg-[var(--color-surface)] shadow-[0_8px_24px_rgba(199,154,67,0.18)] sm:flex'
+              : 'hidden h-full flex-col sm:flex'
+          }
+        >
+          {isFeaturedShowcase && (
+            <div className="flex min-h-9 items-center gap-2 bg-[var(--color-green)] px-3 text-[11px] font-extrabold text-white">
+              <Zap size={15} className="shrink-0 text-[#F4C569]" aria-hidden="true" />
+              <span>{isEn ? 'Featured Listing' : 'إعلان مميز'}</span>
+            </div>
+          )}
+
+          <article
+            className={`relative flex flex-col flex-1 bg-[var(--color-surface)] overflow-hidden transition-all duration-200 group min-w-0 ${
+              isFeaturedShowcase
+                ? 'rounded-none border-0'
+                : 'rounded-[14px] border-[1.5px] border-[var(--color-border)] hover:border-[var(--color-gold)] hover:shadow-[0_6px_24px_rgba(199,154,67,0.16)] hover:-translate-y-[2px]'
+            } ${isSold ? 'opacity-90' : ''}`}
+          >
+            {/* 16:10 Media Container */}
+            <div className="relative aspect-[16/10] bg-[var(--color-cream)]/65 overflow-hidden shrink-0">
+              <button
+                type="button"
+                onClick={() => onSelect(listing)}
+                aria-label={
+                  isEn ? `View details for ${listing.title}` : `عرض تفاصيل ${listing.title}`
+                }
+                className="w-full h-full block text-start cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--color-gold)]"
+              >
+                <SafeImage
+                  src={coverImage}
+                  alt={listing.title}
+                  width={800}
+                  height={500}
+                  loading="lazy"
+                  decoding="async"
+                  className={`w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03] ${
+                    isSold ? 'grayscale-[30%]' : ''
+                  }`}
+                />
+              </button>
+
+              {/* Top-Start Category / Sold Badge */}
+              <span
+                data-status-badge={statusBadge?.kind || 'category'}
+                className={`pointer-events-none absolute top-[9px] start-[9px] text-[10px] font-bold px-2 py-[3px] rounded-md shadow-2xs whitespace-nowrap ${
+                  isSold
+                    ? 'bg-[#14261D]/92 text-white'
+                    : 'bg-[var(--color-green)] text-white'
+                }`}
+              >
+                {isSold ? (isEn ? 'Sold' : 'مباع') : categoryLabel}
+              </span>
+
+              {/* Top-End Circular Favorite Button */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleFavorite(listing.id);
+                }}
+                aria-label={
+                  isFavorite
+                    ? isEn
+                      ? 'Remove from favorites'
+                      : 'إزالة من المفضلة'
+                    : isEn
+                    ? 'Add to favorites'
+                    : 'إضافة إلى المفضلة'
+                }
+                title={
+                  isFavorite
+                    ? isEn
+                      ? 'Remove from favorites'
+                      : 'إزالة من المفضلة'
+                    : isEn
+                    ? 'Save to favorites'
+                    : 'حفظ في المفضلة'
+                }
+                aria-pressed={isFavorite}
+                className="absolute end-[9px] top-[9px] z-20 p-2 rounded-full bg-white/95 dark:bg-[#121D18]/92 shadow-sm transition-transform hover:scale-105 cursor-pointer focus-visible:outline-2 focus-visible:outline-[var(--color-gold)]"
+              >
+                <Heart
+                  size={18}
+                  className={`transition-all duration-200 ${
+                    isFavorite
+                      ? 'fill-red-500 text-red-500 scale-110'
+                      : 'text-[#6B6B6B] dark:text-[#9CB0A5] hover:text-red-500'
+                  }`}
+                  aria-hidden="true"
+                />
+              </button>
+
+              {/* Bottom-Start Featured Pill & Video Indicator */}
+              {isFeaturedShowcase && (
+                <span className="pointer-events-none absolute bottom-[9px] start-[9px] text-[10px] font-extrabold px-2 py-[4px] rounded-md bg-[var(--color-gold)] text-[#10241B] inline-flex items-center gap-1 shadow-2xs">
+                  <Zap size={10} className="fill-current" aria-hidden="true" />
+                  <span>{isEn ? 'Featured' : 'مميز'}</span>
+                </span>
+              )}
+
+              {listing.video?.url && (
+                <span
+                  className={`pointer-events-none absolute bottom-[9px] ${
+                    isFeaturedShowcase ? 'end-[9px]' : 'start-[9px]'
+                  } px-2 py-0.5 rounded bg-black/65 backdrop-blur-xs text-white text-[10px] font-semibold inline-flex items-center gap-1`}
+                >
+                  <Play
+                    size={10}
+                    className="fill-[var(--color-gold)] text-[var(--color-gold)]"
+                    aria-hidden="true"
+                  />
+                  <span>{isEn ? 'Video' : 'فيديو'}</span>
+                </span>
+              )}
+            </div>
+
+            {/* Signature 3px Horizontal Accent Divider */}
+            <div className="h-[3px] w-full shrink-0 bg-[var(--color-gold)]" aria-hidden="true" />
+
+            {/* Card Body */}
+            <div className="flex flex-col flex-1 min-w-0">
+              <div className="flex flex-col flex-1 p-3.5 min-w-0">
+                {/* Location & New Indicator */}
+                <div className="flex items-center justify-between text-[11px] text-[var(--color-muted)] mb-1">
+                  <div className="flex items-center gap-1 truncate min-w-0">
+                    <MapPin size={11} className="shrink-0" aria-hidden="true" />
+                    <span className="truncate">{compactLocation || locationText}</span>
+                  </div>
+                  {isNewShowcase && (
+                    <span className="shrink-0 ms-2 font-bold text-[var(--color-gold-hover)] dark:text-[var(--color-gold)]">
+                      {isEn ? 'New' : 'جديد'}
+                    </span>
+                  )}
+                </div>
+
+                {/* Price + Weight */}
+                <div className="flex items-baseline flex-wrap gap-1.5 mb-2">
+                  <span className="text-[20px] font-black text-[var(--color-ink)] tabular-nums leading-tight">
+                    {formatPriceSar(listing.priceAmount, lang)}
+                  </span>
+                  {listing.weightKg > 0 && (
+                    <span className="text-[11px] text-[var(--color-muted)] font-semibold tabular-nums">
+                      ({listing.weightKg} {isEn ? 'kg' : 'كجم'})
+                    </span>
+                  )}
+                  {listing.quantity > 1 && (
+                    <span className="text-[10.5px] text-[var(--color-muted)] font-semibold tabular-nums">
+                      · {listing.quantity} {isEn ? 'head' : 'رأس'}
+                    </span>
+                  )}
+                </div>
+
+                {/* Colored Listing Title + Green Veterinary Check */}
+                <div className="flex items-start gap-1.5 mb-2.5 min-h-[2.35rem]">
+                  <button
+                    type="button"
+                    onClick={() => onSelect(listing)}
+                    className="text-start text-[13px] font-extrabold text-[var(--color-green-ink)] hover:underline leading-[1.35] line-clamp-2 cursor-pointer flex-1 min-w-0 focus-visible:outline-2 focus-visible:outline-[var(--color-gold)] rounded-sm"
+                  >
+                    {listing.title}
+                  </button>
+                  {listing.vaccinated && (
+                    <span
+                      title={isEn ? 'Veterinary vaccinated' : 'محصّن بيطرياً'}
+                      className="shrink-0 mt-0.5"
+                    >
+                      <ShieldCheck size={16} className="text-[#16A34A]" aria-hidden="true" />
+                    </span>
+                  )}
+                </div>
+
+                {/* Spec Chips: Type & Breed */}
+                <div className="mb-2 flex min-w-0 flex-wrap gap-1.5">
+                  <span className="inline-flex min-w-0 items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-warm)] dark:bg-[var(--color-cream)]/45 px-2 py-1 text-[10px] leading-4 transition-colors hover:border-[var(--color-gold)] hover:bg-[var(--color-surface)]">
+                    <Tag
+                      className="h-3 w-3 shrink-0 text-[var(--color-gold-hover)] dark:text-[var(--color-gold)]"
+                      aria-hidden="true"
+                    />
+                    <span className="text-[var(--color-muted)]">
+                      {isEn ? 'Type:' : 'النوع:'}
+                    </span>
+                    <strong className="truncate font-bold text-[var(--color-ink)]">
+                      {categoryLabel}
+                    </strong>
+                  </span>
+
+                  <span className="inline-flex min-w-0 items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-warm)] dark:bg-[var(--color-cream)]/45 px-2 py-1 text-[10px] leading-4 transition-colors hover:border-[var(--color-gold)] hover:bg-[var(--color-surface)]">
+                    <Award
+                      className="h-3 w-3 shrink-0 text-[var(--color-gold-hover)] dark:text-[var(--color-gold)]"
+                      aria-hidden="true"
+                    />
+                    <span className="text-[var(--color-muted)]">
+                      {isEn ? 'Breed:' : 'السلالة:'}
+                    </span>
+                    <strong className="max-w-[92px] truncate font-bold text-[var(--color-ink)]">
+                      {subCategory ? trCategoryName(subCategory.name, lang) : breedLabel}
+                    </strong>
+                  </span>
+                </div>
+              </div>
+
+              {/* Seller Row, Quick Contact & Bottom Inspect CTA */}
+              <div className="flex flex-wrap items-center justify-between gap-2 mt-auto px-3.5 py-2 border-t border-[var(--color-border)]/65">
+                <div className="flex items-center justify-between gap-2 w-full min-w-0">
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <div
+                      aria-hidden="true"
+                      className="w-6 h-6 rounded-full bg-[var(--color-gold-soft)] flex items-center justify-center text-[9px] font-extrabold text-[var(--color-green-ink)] shrink-0"
+                    >
+                      {sellerInitials || 'U'}
+                    </div>
+                    <span className="min-w-0 max-w-[125px]">
+                      {onSelectSeller && seller ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectSeller(seller.userId);
+                          }}
+                          title={sellerName}
+                          className="block truncate text-[11px] font-bold text-[var(--color-ink)] hover:text-[var(--color-green-ink)] hover:underline cursor-pointer max-w-full"
+                        >
+                          {sellerName}
+                        </button>
+                      ) : (
+                        <span
+                          title={sellerName}
+                          className="block truncate text-[11px] font-bold text-[var(--color-ink)]"
+                        >
+                          {sellerName}
+                        </span>
+                      )}
+                      {seller?.city && (
+                        <span className="block truncate text-[9px] font-semibold text-[var(--color-muted)]">
+                          {trCityName(seller.city, lang)}
+                        </span>
+                      )}
+                    </span>
+
+                    {sellerVerified && (
+                      <span
+                        title={isEn ? 'Verified Breeder' : 'مربٍّ موثق'}
+                        className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[#DCFCE7] text-[#15803D]"
+                      >
+                        <Check className="h-3 w-3" aria-hidden="true" />
+                        <span className="sr-only">
+                          {isEn ? 'Verified Breeder' : 'مربٍّ موثق'}
+                        </span>
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Quick Contact Icons (only when signed-in viewer & seller phone/WhatsApp exposed) */}
+                  {(contactLinks.whatsappHref || contactLinks.telHref) && (
+                    <div className="relative z-20 flex items-center gap-1.5 shrink-0">
+                      {contactLinks.whatsappHref && (
+                        <a
+                          href={contactLinks.whatsappHref}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={isEn ? 'Message seller on WhatsApp' : 'مراسلة البائع عبر واتساب'}
+                          className="w-[26px] h-[26px] rounded-md bg-[#E8F5EB] flex items-center justify-center hover:bg-[#c3e6cb] transition-colors"
+                        >
+                          <svg
+                            aria-hidden="true"
+                            viewBox="0 0 24 24"
+                            className="w-[14px] h-[14px] fill-[#1B7A3A]"
+                          >
+                            <path d="M16.6 14c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1-.2.3-.6.8-.8 1-.1.2-.3.2-.6.1-.3-.1-1.1-.4-2.1-1.2-.8-.7-1.3-1.5-1.5-1.8-.2-.3 0-.4.1-.6.1-.1.3-.3.4-.5.1-.2.2-.3.3-.5.1-.2 0-.4 0-.5-.1-.2-.6-1.5-.8-2-.2-.5-.4-.4-.6-.4h-.5c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.4s1 2.8 1.1 3c.2.2 2 3.1 4.9 4.3.7.3 1.3.5 1.7.6.7.2 1.4.2 1.9.1.6-.1 1.8-.7 2.1-1.5.3-.8.3-1.5.2-1.7-.1-.1-.3-.2-.6-.3zM12 20.3c-1.4 0-2.8-.4-4-1.1l-.3-.2-3 1 1-2.9-.2-.3c-.8-1.2-1.2-2.7-1.2-4.2 0-4.3 3.5-7.8 7.8-7.8s7.8 3.5 7.8 7.8-3.5 7.8-7.8 7.8zM12 2C6.5 2 2 6.5 2 12c0 1.7.4 3.4 1.3 4.9L2 22l5.2-1.3C8.6 21.6 10.3 22 12 22c5.5 0 10-4.5 10-10S17.5 2 12 2z" />
+                          </svg>
+                        </a>
+                      )}
+                      {contactLinks.telHref && (
+                        <a
+                          href={contactLinks.telHref}
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={isEn ? 'Call seller' : 'الاتصال بالبائع'}
+                          className="w-[26px] h-[26px] rounded-md bg-[var(--color-cream)] flex items-center justify-center hover:bg-[var(--color-cream-hover)] transition-colors text-[var(--color-muted)]"
+                        >
+                          <Phone size={12} aria-hidden="true" />
+                        </a>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Full-Width Bottom View Listing Link */}
+                <button
+                  type="button"
+                  onClick={() => onSelect(listing)}
+                  className="w-full pt-2 border-t border-[var(--color-border)]/65 mt-0.5 flex items-center gap-1.5 text-[12px] font-bold text-[var(--color-ink)] transition-colors group-hover:text-[var(--color-gold-hover)] dark:group-hover:text-[var(--color-gold)] cursor-pointer focus-visible:outline-2 focus-visible:outline-[var(--color-gold)] rounded-sm"
+                >
+                  <span>{isEn ? 'View Listing' : 'معاينة الإعلان'}</span>
+                  <DirArrow size={13} aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+          </article>
+        </div>
+      </>
+    );
+  }
 
   return (
     <article

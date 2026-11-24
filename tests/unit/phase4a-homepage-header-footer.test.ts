@@ -94,15 +94,9 @@ test('Phase 4A Homepage, Header, and Footer preserve core contracts and implemen
   assert.match(pricingSrc, /مقارنة بين الباقات/);
 
   const appSrc = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8');
-  assert.match(appSrc, /<HomeStatsStrip/);
+  assert.doesNotMatch(appSrc, /<HomeStatsStrip/);
   assert.match(appSrc, /<HomeCategoriesSection/);
-  assert.match(appSrc, /<HomeBreedsSection/);
-  assert.match(appSrc, /<HomeRegionsSection/);
-  assert.match(appSrc, /<HomeServicesSection/);
-  assert.match(appSrc, /<HomeBreedersSection/);
-  assert.match(appSrc, /<HomeTrustSection/);
-  assert.match(appSrc, /<HomeGuidesPreviewSection/);
-  assert.match(appSrc, /<HomePricingSection/);
+  assert.match(appSrc, /<HomeCelebimLowerSections/);
   assert.match(appSrc, /<HomeQuickContactSection/);
   assert.match(appSrc, /<PricingView/);
   assert.match(appSrc, /<WeightsCalculatorView/);
@@ -111,7 +105,20 @@ test('Phase 4A Homepage, Header, and Footer preserve core contracts and implemen
   assert.match(appSrc, /<GuidesView/);
   assert.match(appSrc, /<HelpCenterView/);
   assert.match(appSrc, /<PolicyInfoView/);
-  assert.match(appSrc, /verifiedSellers=\{verifiedHomeSellers\}/);
+  assert.match(appSrc, /verifiedSellers: verifiedHomeSellers/);
+
+  const celebimLowerSrc = readFileSync(
+    resolve(process.cwd(), 'src/components/HomeCelebimLowerSections.tsx'),
+    'utf8'
+  );
+  assert.match(celebimLowerSrc, /export function HomeCelebimLowerSections/);
+  assert.match(celebimLowerSrc, /أحدث العمليات/);
+  assert.match(celebimLowerSrc, /كيف يعمل السوق/);
+  assert.match(celebimLowerSrc, /تمييز الإعلانات/);
+  assert.match(celebimLowerSrc, /باقات سوق الغنم/);
+  assert.match(celebimLowerSrc, /نتائج حقيقية من مربي الحلال/);
+  assert.match(celebimLowerSrc, /الأسئلة الشائعة حول سوق الغنم/);
+  assert.doesNotMatch(celebimLowerSrc, /celebim\.com/i);
 });
 
 test('Header implements 7-item Saudi marketplace navigation with visible Contact link, compact Globe language menu, single Login CTA, and 2-column Services mega menu', () => {

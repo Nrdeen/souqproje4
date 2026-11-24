@@ -20,6 +20,7 @@ import {
   createUserRecord,
 } from '../auth/accounts';
 import type { VerifiedGoogleClaims } from '../auth/google';
+import type { VerifiedFacebookClaims } from '../auth/facebook';
 import { DEMO_USER_IDS } from '../auth/migrate';
 import {
   canAccessConversation,
@@ -327,6 +328,14 @@ export class JsonMarketplaceRepository implements MarketplaceRepository {
     return this.store.users.find((u) => u.phone === phone);
   }
 
+  async findUserByEmail(email: string) {
+    const emailLower = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    if (!emailLower) return undefined;
+    return this.store.users.find(
+      (u) => typeof u.email === 'string' && u.email.trim().toLowerCase() === emailLower
+    );
+  }
+
   async getCredential(userId: string): Promise<Credential | undefined> {
     return this.store.credentials.find((c) => c.userId === userId);
   }
@@ -346,13 +355,35 @@ export class JsonMarketplaceRepository implements MarketplaceRepository {
   async registerUser(params: {
     name: string;
     phone: string;
+    email?: string | null;
     role: 'buyer' | 'seller';
     passwordHash: string;
   }) {
     if (this.store.users.some((u) => u.phone === params.phone)) {
       throw new RepositoryError(409, 'رقم الجوال مسجل مسبقاً، سجّل الدخول بدلاً من ذلك', 'phone_exists');
     }
-    const user = createUserRecord({ name: params.name, phone: params.phone, role: params.role });
+    const cleanEmail =
+      typeof params.email === 'string' && params.email.trim()
+        ? params.email.trim().toLowerCase().slice(0, 255)
+        : undefined;
+    if (
+      cleanEmail &&
+      this.store.users.some(
+        (u) => typeof u.email === 'string' && u.email.trim().toLowerCase() === cleanEmail
+      )
+    ) {
+      throw new RepositoryError(
+        409,
+        'البريد الإلكتروني مسجل مسبقاً، سجّل الدخول بدلاً من ذلك',
+        'email_exists'
+      );
+    }
+    const user = createUserRecord({
+      name: params.name,
+      phone: params.phone,
+      ...(cleanEmail ? { email: cleanEmail } : {}),
+      role: params.role,
+    });
     this.store.users.push(user);
     let seller: any | undefined;
     if (params.role === 'seller') {
@@ -368,17 +399,27 @@ export class JsonMarketplaceRepository implements MarketplaceRepository {
     return { user, seller };
   }
 
-  async getUserAuthMeta(userId: string): Promise<{ googleLinked: boolean; hasPassword: boolean }> {
-    const googleLinked = (this.store.googleIdentities || []).some(
-      (g) => g.userId === userId && g.provider === 'google'
-    );
+  async getUserAuthMeta(
+    userId: string
+  ): Promise<{ googleLinked: boolean; facebookLinked: boolean; hasPassword: boolean }> {
+    const identities = this.store.googleIdentities || [];
+    const googleLinked = identities.some((g) => g.userId === userId && g.provider === 'google');
+    const facebookLinked = identities.some((g) => g.userId === userId && g.provider === 'facebook');
     const hasPassword = (this.store.credentials || []).some((c) => c.userId === userId);
-    return { googleLinked, hasPassword };
+    return { googleLinked, facebookLinked, hasPassword };
   }
 
   async findUserByGoogleSubject(subject: string) {
     const identity = (this.store.googleIdentities || []).find(
       (g) => g.provider === 'google' && g.subject === subject
+    );
+    if (!identity) return undefined;
+    return this.store.users.find((u) => u.id === identity.userId);
+  }
+
+  async findUserByFacebookSubject(subject: string) {
+    const identity = (this.store.googleIdentities || []).find(
+      (g) => g.provider === 'facebook' && g.subject === subject
     );
     if (!identity) return undefined;
     return this.store.users.find((u) => u.id === identity.userId);
@@ -438,6 +479,7 @@ export class JsonMarketplaceRepository implements MarketplaceRepository {
 
     const identity = createGoogleIdentityRecord({
       userId: user.id,
+      provider: 'google',
       subject: params.claims.sub,
       email: emailLower,
       emailVerified: params.claims.emailVerified,
@@ -446,7 +488,7 @@ export class JsonMarketplaceRepository implements MarketplaceRepository {
     });
     this.store.googleIdentities.push(identity);
     this.saveImmediate();
-    return { user, isNewUser: true, googleLinked: true, hasPassword: false };
+    return { user, isNewUser: true, googleLinked: true, facebookLinked: false, hasPassword: false };
   }
 
   async linkGoogleIdentity(params: { userId: string; claims: VerifiedGoogleClaims }) {
@@ -492,9 +534,140 @@ export class JsonMarketplaceRepository implements MarketplaceRepository {
       this.store.googleIdentities.push(
         createGoogleIdentityRecord({
           userId: user.id,
+          provider: 'google',
           subject: params.claims.sub,
           email: params.claims.email,
           emailVerified: params.claims.emailVerified,
+          name: params.claims.name,
+          pictureUrl: params.claims.picture || null,
+        })
+      );
+    }
+
+    this.saveImmediate();
+    const meta = await this.getUserAuthMeta(user.id);
+    return { user, ...meta };
+  }
+
+  async authenticateWithFacebook(params: {
+    claims: VerifiedFacebookClaims;
+    role?: 'buyer' | 'seller';
+    mode?: 'login' | 'register';
+  }) {
+    this.store.googleIdentities = this.store.googleIdentities || [];
+    const existingIdentity = this.store.googleIdentities.find(
+      (g) => g.provider === 'facebook' && g.subject === params.claims.sub
+    );
+
+    const emailLower = params.claims.email ? params.claims.email.trim().toLowerCase() : '';
+
+    if (existingIdentity) {
+      const user = this.store.users.find((u) => u.id === existingIdentity.userId);
+      if (!user) {
+        throw new RepositoryError(404, 'الحساب المرتبط بهوية Facebook غير موجود', 'linked_user_missing');
+      }
+      if (emailLower) {
+        existingIdentity.email = emailLower;
+        existingIdentity.emailVerified = params.claims.emailVerified;
+      }
+      existingIdentity.name = params.claims.name;
+      existingIdentity.pictureUrl = params.claims.picture || null;
+      existingIdentity.updatedAt = new Date().toISOString();
+      this.saveImmediate();
+      const meta = await this.getUserAuthMeta(user.id);
+      return { user, isNewUser: false, ...meta };
+    }
+
+    if (emailLower) {
+      const matchingEmailUser = this.store.users.find(
+        (u) => typeof u.email === 'string' && u.email.trim().toLowerCase() === emailLower
+      );
+      if (matchingEmailUser) {
+        // Never auto-link solely on matching email; require explicit proof of existing account ownership.
+        throw new RepositoryError(
+          409,
+          'يوجد حساب مسجل مسبقاً بهذا البريد الإلكتروني. أدخل بيانات حسابك الحالي لتأكيد ملكيته وربطه بحساب Facebook.',
+          'account_exists_link_required'
+        );
+      }
+    }
+
+    const role: 'buyer' | 'seller' = params.role === 'seller' ? 'seller' : 'buyer';
+    const user = createUserRecord({
+      name: params.claims.name,
+      phone: null,
+      ...(emailLower ? { email: emailLower } : {}),
+      role,
+    });
+    this.store.users.push(user);
+
+    if (role === 'seller') {
+      const seller = buildSellerProfile(user);
+      this.store.sellers.push(seller);
+    }
+
+    const identity = createGoogleIdentityRecord({
+      userId: user.id,
+      provider: 'facebook',
+      subject: params.claims.sub,
+      email: emailLower || user.email,
+      emailVerified: Boolean(emailLower && params.claims.emailVerified),
+      name: params.claims.name,
+      pictureUrl: params.claims.picture || null,
+    });
+    this.store.googleIdentities.push(identity);
+    this.saveImmediate();
+    return { user, isNewUser: true, googleLinked: false, facebookLinked: true, hasPassword: false };
+  }
+
+  async linkFacebookIdentity(params: { userId: string; claims: VerifiedFacebookClaims }) {
+    const user = this.store.users.find((u) => u.id === params.userId);
+    if (!user) {
+      throw new RepositoryError(404, 'الحساب غير موجود', 'user_not_found');
+    }
+    if (user.status !== 'active') {
+      throw new RepositoryError(403, 'هذا الحساب موقوف، تواصل مع إدارة المنصة', 'account_suspended');
+    }
+
+    this.store.googleIdentities = this.store.googleIdentities || [];
+    const bySub = this.store.googleIdentities.find(
+      (g) => g.provider === 'facebook' && g.subject === params.claims.sub
+    );
+    if (bySub && bySub.userId !== user.id) {
+      throw new RepositoryError(
+        409,
+        'حساب Facebook هذا مرتبط بحساب آخر بالفعل',
+        'facebook_subject_conflict'
+      );
+    }
+
+    const byUser = this.store.googleIdentities.find(
+      (g) => g.provider === 'facebook' && g.userId === user.id
+    );
+    if (byUser && byUser.subject !== params.claims.sub) {
+      throw new RepositoryError(
+        409,
+        'هذا الحساب مرتبط بالفعل بحساب Facebook آخر',
+        'facebook_already_linked'
+      );
+    }
+
+    const emailLower = params.claims.email ? params.claims.email.trim().toLowerCase() : user.email;
+    const nowIso = new Date().toISOString();
+    if (bySub) {
+      bySub.email = emailLower;
+      bySub.emailVerified = Boolean(params.claims.email && params.claims.emailVerified);
+      bySub.name = params.claims.name;
+      bySub.pictureUrl = params.claims.picture || null;
+      bySub.updatedAt = nowIso;
+    } else {
+      this.store.googleIdentities.push(
+        createGoogleIdentityRecord({
+          userId: user.id,
+          provider: 'facebook',
+          subject: params.claims.sub,
+          email: emailLower,
+          emailVerified: Boolean(params.claims.email && params.claims.emailVerified),
           name: params.claims.name,
           pictureUrl: params.claims.picture || null,
         })
@@ -2469,12 +2642,6 @@ export class JsonMarketplaceRepository implements MarketplaceRepository {
     const nowIso = new Date().toISOString();
 
     if (!seller) {
-      if (
-        currentUser.role !== 'seller' &&
-        !this.store.listings.some((l) => l.sellerId === currentUser.id)
-      ) {
-        throw new RepositoryError(403, 'طلب التوثيق متاح لحسابات البائعين والمربين فقط');
-      }
       seller = {
         userId: currentUser.id,
         displayName: `مراح ${currentUser.name}`,

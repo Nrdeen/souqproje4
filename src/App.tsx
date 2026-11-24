@@ -1,7 +1,21 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Loader2, MapPin, Phone, Plus, TrendingUp } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  MapPin,
+  Phone,
+  Plus,
+  Search,
+  SlidersHorizontal,
+  X,
+} from 'lucide-react';
 import { api, setCsrfToken } from './lib/api';
 import { normalizeSaudiMobileClient } from './lib/auth-validation';
+import { useI18n } from './lib/i18n';
+import { trBreedName, trRegionName } from './lib/bilingual';
 import type { AppNotification, BootstrapPayload, Listing } from './types/marketplace';
 import type { GoogleAuthSuccessPayload } from './components/AuthView';
 import { Header } from './components/Header';
@@ -9,18 +23,10 @@ import { Modal } from './components/Modal';
 import { HeroSearch, type QuickFilterValues } from './components/HeroSearch';
 import { ContactSection } from './components/ContactSection';
 import {
-  HomeBreedersSection,
-  HomeBreedsSection,
   HomeCategoriesSection,
-  HomeGuidesPreviewSection,
-  HomePricingSection,
   HomeQuickContactSection,
-  HomeRegionsSection,
-  HomeServicesSection,
-  HomeStatsStrip,
-  HomeTrustSection,
 } from './components/HomeSections';
-import { HomeCommandBanner } from './components/HomeCommandBanner';
+import { HomeCelebimLowerSections } from './components/HomeCelebimLowerSections';
 import { DynamicHeroBanner } from './components/DynamicHeroBanner';
 import { ListingCard } from './components/ListingCard';
 import {
@@ -172,7 +178,11 @@ export default function App() {
   const [activeDashboardTab, setActiveDashboardTab] = useState<DashboardTab | null>(
     initialRoute.dashboardTab
   );
+  const { lang, isEn } = useI18n();
   const [homeBreedFilter, setHomeBreedFilter] = useState<string>('all');
+  const [homeRegionFilter, setHomeRegionFilter] = useState<string>('all');
+  const [homeSortBy, setHomeSortBy] = useState<'recommended' | 'newest' | 'price-asc' | 'price-desc'>('recommended');
+  const [homePage, setHomePage] = useState<number>(1);
   const [filters, setFilters] = useState<DirectoryFilters>(() =>
     initialRoute.page === 'listings' ? initialRoute.listingFilters : DEFAULT_FILTERS
   );
@@ -190,32 +200,10 @@ export default function App() {
   const [showProfileCompletionModal, setShowProfileCompletionModal] = useState(false);
   const [profileCompletionPhone, setProfileCompletionPhone] = useState('');
   const [profileCompletionName, setProfileCompletionName] = useState('');
-  const [profileCompletionRole, setProfileCompletionRole] = useState<'buyer' | 'seller'>('buyer');
   const [profileCompletionBusy, setProfileCompletionBusy] = useState(false);
   const [profileCompletionError, setProfileCompletionError] = useState('');
   const postAuthRouteRef = useRef<AppRoute | null>(null);
-  const [compareIds, setCompareIds] = useState<string[]>(() => {
-    if (typeof window === 'undefined') return [];
-    try {
-      const saved = localStorage.getItem('souq-compare-ids');
-      if (!saved) return [];
-      const parsed = JSON.parse(saved);
-      return Array.isArray(parsed)
-        ? parsed.filter((id): id is string => typeof id === 'string').slice(0, 4)
-        : [];
-    } catch {
-      return [];
-    }
-  });
   const toastTimerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('souq-compare-ids', JSON.stringify(compareIds));
-    } catch {
-      // ignore storage errors
-    }
-  }, [compareIds]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -914,8 +902,8 @@ export default function App() {
     }
   };
 
-  const handleLogin = async (phone: string, password: string) => {
-    const res = await api.login({ phone, password });
+  const handleLogin = async (payload: { phone?: string; email?: string; password: string }) => {
+    const res = await api.login(payload);
     setCsrfToken(res.csrfToken);
     await loadAllData();
     notify(`مرحباً ${res.user.name}`);
@@ -926,9 +914,16 @@ export default function App() {
     name: string,
     phone: string,
     password: string,
-    role: 'buyer' | 'seller'
+    role: 'buyer' | 'seller',
+    email?: string
   ) => {
-    const res = await api.register({ name, phone, password, role });
+    const res = await api.register({
+      name,
+      phone,
+      ...(email ? { email } : {}),
+      password,
+      role,
+    });
     setCsrfToken(res.csrfToken);
     await loadAllData();
     notify(`مرحباً ${res.user.name}، تم تفعيل حسابك بنجاح`);
@@ -941,21 +936,23 @@ export default function App() {
     }
     const boot = await fetchAllData();
     const resolvedUser = res.user ?? boot?.currentUser ?? undefined;
+    const providerLabel = res.provider === 'facebook' ? 'Facebook' : 'Google';
     if (res.isNewUser) {
       notify(
         resolvedUser?.name
-          ? `مرحباً ${resolvedUser.name}، تم إنشاء حسابك عبر Google بنجاح`
-          : 'تم إنشاء حسابك عبر Google بنجاح'
+          ? `مرحباً ${resolvedUser.name}، تم إنشاء حسابك عبر ${providerLabel} بنجاح`
+          : `تم إنشاء حسابك عبر ${providerLabel} بنجاح`
       );
     } else {
       notify(
-        resolvedUser?.name ? `مرحباً ${resolvedUser.name}` : 'تم تسجيل الدخول عبر Google بنجاح'
+        resolvedUser?.name
+          ? `مرحباً ${resolvedUser.name}`
+          : `تم تسجيل الدخول عبر ${providerLabel} بنجاح`
       );
     }
     finishPostAuthNavigation();
     if (res.needsProfileCompletion) {
       setProfileCompletionName(resolvedUser?.name || '');
-      setProfileCompletionRole(resolvedUser?.role === 'seller' ? 'seller' : 'buyer');
       setProfileCompletionPhone('');
       setProfileCompletionError('');
       setShowProfileCompletionModal(true);
@@ -965,9 +962,6 @@ export default function App() {
   useEffect(() => {
     if (showProfileCompletionModal && bootstrap?.currentUser) {
       setProfileCompletionName((prev) => prev || bootstrap.currentUser?.name || '');
-      if (bootstrap.currentUser.role === 'seller') {
-        setProfileCompletionRole('seller');
-      }
     }
   }, [showProfileCompletionModal, bootstrap?.currentUser]);
 
@@ -992,7 +986,7 @@ export default function App() {
       await api.completeProfile({
         phone: normalized,
         ...(trimmedName ? { name: trimmedName } : {}),
-        ...(bootstrap?.currentUser?.role !== 'admin' ? { role: profileCompletionRole } : {}),
+        ...(bootstrap?.currentUser?.role !== 'admin' ? { role: 'seller' } : {}),
       });
       setShowProfileCompletionModal(false);
       setProfileCompletionPhone('');
@@ -1121,13 +1115,46 @@ export default function App() {
     );
   };
 
+  const HOME_PAGE_SIZE = 8;
+
+  const homeFilteredListings = useMemo(() => {
+    const filtered = publishedListings.filter((l) => {
+      if (homeBreedFilter !== 'all' && l.breedId !== homeBreedFilter) return false;
+      if (homeRegionFilter !== 'all' && l.regionId !== homeRegionFilter) return false;
+      return true;
+    });
+
+    const sorted = [...filtered];
+    sorted.sort((a, b) => {
+      if (homeSortBy === 'price-asc') {
+        return a.priceAmount - b.priceAmount;
+      }
+      if (homeSortBy === 'price-desc') {
+        return b.priceAmount - a.priceAmount;
+      }
+      if (homeSortBy === 'newest') {
+        return (
+          new Date(b.publishedAt || b.createdAt).getTime() -
+          new Date(a.publishedAt || a.createdAt).getTime()
+        );
+      }
+      // 'recommended': featured first, then newest
+      if (a.isFeatured !== b.isFeatured) return a.isFeatured ? -1 : 1;
+      return (
+        new Date(b.publishedAt || b.createdAt).getTime() -
+        new Date(a.publishedAt || a.createdAt).getTime()
+      );
+    });
+    return sorted;
+  }, [publishedListings, homeBreedFilter, homeRegionFilter, homeSortBy]);
+
+  const homeTotalPages = Math.max(1, Math.ceil(homeFilteredListings.length / HOME_PAGE_SIZE));
+  const safeHomePage = Math.min(homePage, homeTotalPages);
+
   const homeListings = useMemo(() => {
-    const base =
-      homeBreedFilter === 'all'
-        ? publishedListings
-        : publishedListings.filter((l) => l.breedId === homeBreedFilter);
-    return base.slice(0, 6);
-  }, [publishedListings, homeBreedFilter]);
+    const start = (safeHomePage - 1) * HOME_PAGE_SIZE;
+    return homeFilteredListings.slice(start, start + HOME_PAGE_SIZE);
+  }, [homeFilteredListings, safeHomePage]);
 
   const selectedListing = useMemo(
     () =>
@@ -1144,39 +1171,6 @@ export default function App() {
     [allListings, editingListingId]
   );
 
-  const handleToggleCompare = useCallback(
-    (listingId: string) => {
-      setCompareIds((prev) => {
-        if (prev.includes(listingId)) {
-          notify('تمت إزالة الإعلان من قائمة المقارنة');
-          return prev.filter((id) => id !== listingId);
-        }
-        if (prev.length >= 4) {
-          notify('يمكنك مقارنة 4 إعلانات كحد أقصى في الوقت نفسه');
-          return prev;
-        }
-        notify(`تمت إضافة الإعلان إلى قائمة المقارنة (${prev.length + 1}/4)`);
-        return [...prev, listingId];
-      });
-    },
-    [notify]
-  );
-
-  const handleClearCompare = useCallback(() => {
-    setCompareIds([]);
-    notify('تم مسح قائمة مقارنة المواشي');
-  }, [notify]);
-
-  const compareListings = useMemo(() => {
-    const pool = [...allListings];
-    publishedListings.forEach((p) => {
-      if (!pool.some((item) => item.id === p.id)) pool.push(p);
-    });
-    return compareIds
-      .map((id) => pool.find((l) => l.id === id))
-      .filter((item): item is Listing => Boolean(item));
-  }, [compareIds, allListings, publishedListings]);
-
   const selectedSeller = useMemo(
     () =>
       resolveRequestedSeller({
@@ -1186,7 +1180,7 @@ export default function App() {
     [bootstrap, selectedSellerId]
   );
 
-  const { verifiedSellers: verifiedHomeSellers, otherSellers: otherHomeSellers } = useMemo(
+  const { verifiedSellers: verifiedHomeSellers } = useMemo(
     () => partitionSellersByVerification(bootstrap?.sellers || []),
     [bootstrap]
   );
@@ -1269,6 +1263,7 @@ export default function App() {
         notifications={notifications}
         onOpenNotification={handleOpenNotification}
         onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
+        unreadMessagesCount={totalUnreadMessages}
       />}
 
       {toast && (
@@ -1299,15 +1294,6 @@ export default function App() {
               onHowItWorks={() => navigate('how')}
             />
 
-            {/* Live Marketplace Indicator Strip */}
-            <HomeStatsStrip
-              publishedCount={publishedListingsTotal || publishedListings.length}
-              verifiedBreedersCount={verifiedHomeSellers.length}
-              breedsCount={bootstrap.breeds.length}
-              activeRegionsCount={activeRegionsCount}
-              onNavigate={(nextPage) => navigate(nextPage)}
-            />
-
             {/* Section 1: Livestock Categories, Breeds & Purpose */}
             <HomeCategoriesSection
               categories={bootstrap.categories}
@@ -1321,273 +1307,340 @@ export default function App() {
               }}
             />
 
-            {/* Section 2: Modern Curated Latest Listings */}
+            {/* Section 2: Listing Showcase (Celebim Showcase Design in Arabic) */}
             <section
+              id="ilan-vitrini"
               aria-labelledby="home-latest-listings-heading"
-              className="bg-[var(--color-surface)] border-y border-[var(--color-border)] py-12 lg:py-16 transition-colors"
+              className="bg-[var(--color-surface)] border-y border-[var(--color-border)] scroll-mt-20 transition-colors"
             >
-              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-5 pb-6 border-b border-[var(--color-border)]">
-                <div className="max-w-2xl">
-                  <div className="inline-flex items-center gap-2 text-xs font-bold text-[var(--color-green-ink)] mb-2">
-                    <TrendingUp size={15} className="text-[var(--color-gold)]" aria-hidden="true" />
-                    <span>عروض مختارة ومحدّثة يومياً</span>
+              <div className="mx-auto max-w-[1280px] px-4 pb-10 pt-6 sm:px-6 sm:pb-16 sm:pt-9 lg:px-8">
+                {/* Showcase Header */}
+                <div className="mb-3 flex flex-col gap-2 border-b border-[var(--color-border)] pb-3 sm:mb-4 sm:gap-4 sm:pb-3 sm:flex-row sm:items-end sm:justify-between">
+                  <div className="text-center sm:text-start">
+                    <div
+                      className={`text-[11px] font-extrabold text-[var(--color-gold-hover)] dark:text-[var(--color-gold)] ${
+                        isEn ? 'uppercase tracking-[0.16em]' : ''
+                      }`}
+                    >
+                      {isEn ? 'Listing Showcase' : 'معرض الإعلانات'}
+                    </div>
+                    <h2
+                      id="home-latest-listings-heading"
+                      className="mt-1 font-display text-[24px] font-black leading-[1.15] tracking-tight text-[var(--color-ink)] sm:mt-2 sm:text-[38px]"
+                    >
+                      {isEn ? 'Latest Livestock Listings' : 'أحدث عروض المواشي'}
+                    </h2>
+                    <p className="mt-1 hidden text-[14px] text-[var(--color-muted)] sm:block">
+                      {isEn
+                        ? 'Filter, compare, and open the listing that fits you.'
+                        : 'صفّح، قارن، وافتح الإعلان الذي يناسبك.'}
+                    </p>
                   </div>
-                  <h2
-                    id="home-latest-listings-heading"
-                    className="font-display text-2xl sm:text-3xl font-extrabold text-[var(--color-ink)] tracking-tight"
+
+                  <p
+                    className="hidden text-[13px] font-semibold text-[var(--color-muted)] sm:block tabular-nums"
+                    aria-live="polite"
                   >
-                    أحدث عروض الحلال المختارة
-                  </h2>
-                  <p className="mt-1.5 text-sm text-[var(--color-muted)] leading-relaxed">
-                    مواصفات واضحة للعمر والوزن والتحصين مع تسعير شفاف بالريال السعودي.
+                    <strong className="text-[var(--color-ink)]">
+                      {homeFilteredListings.length.toLocaleString('en-US')}
+                    </strong>{' '}
+                    {isEn ? 'listings' : 'إعلان'}
                   </p>
                 </div>
 
-                {/* Unified Breed Segmented Tabs */}
-                <div className="flex flex-nowrap md:flex-wrap items-center gap-1 p-1.5 bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-x-auto no-scrollbar max-w-full shadow-2xs shrink-0">
+                {/* Quick Filter Pills Row by Breed */}
+                <div
+                  className="mb-2.5 flex flex-nowrap sm:flex-wrap gap-2 overflow-x-auto no-scrollbar pb-1"
+                  aria-label={isEn ? 'Quick filter by breed' : 'تصفية سريعة حسب السلالة'}
+                >
                   <button
                     type="button"
-                    onClick={() => setHomeBreedFilter('all')}
-                    className={`min-h-[40px] sm:min-h-[36px] px-3.5 py-1.5 rounded-xl text-xs font-bold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    aria-pressed={homeBreedFilter === 'all'}
+                    onClick={() => {
+                      setHomeBreedFilter('all');
+                      setHomePage(1);
+                    }}
+                    className={`shrink-0 rounded-full border px-4 py-2 text-[13px] font-bold transition-colors cursor-pointer ${
                       homeBreedFilter === 'all'
-                        ? 'bg-[var(--color-green)] text-white shadow-xs'
-                        : 'text-[var(--color-muted)] hover:text-[var(--color-ink)] hover:bg-[var(--color-cream)]/60'
+                        ? 'border-[var(--color-green)] bg-[var(--color-green)] text-white'
+                        : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-ink)]/85 hover:border-[var(--color-gold)]'
                     }`}
                   >
-                    الكل
+                    {isEn ? 'All Listings' : 'جميع الإعلانات'}
                   </button>
                   {bootstrap.breeds.map((b) => (
                     <button
                       key={b.id}
                       type="button"
-                      onClick={() => setHomeBreedFilter(b.id)}
-                      className={`min-h-[40px] sm:min-h-[36px] px-3.5 py-1.5 rounded-xl text-xs font-bold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                      aria-pressed={homeBreedFilter === b.id}
+                      onClick={() => {
+                        setHomeBreedFilter(b.id);
+                        setHomePage(1);
+                      }}
+                      className={`shrink-0 rounded-full border px-4 py-2 text-[13px] font-bold transition-colors cursor-pointer ${
                         homeBreedFilter === b.id
-                          ? 'bg-[var(--color-green)] text-white shadow-xs'
-                          : 'text-[var(--color-muted)] hover:text-[var(--color-ink)] hover:bg-[var(--color-cream)]/60'
+                          ? 'border-[var(--color-green)] bg-[var(--color-green)] text-white'
+                          : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-ink)]/85 hover:border-[var(--color-gold)]'
                       }`}
                     >
-                      {b.name}
+                      {trBreedName(b.name, lang)}
                     </button>
                   ))}
                 </div>
-              </div>
 
-              {/* Regional discovery: only regions that currently have listings, with counts */}
-              {bootstrap.regions.length > 0 && (() => {
-                const regionRows = bootstrap.regions
-                  .map((reg) => ({
-                    reg,
-                    count: publishedListings.filter((listing) => listing.regionId === reg.id).length,
-                  }))
-                  .filter((row) => row.count > 0)
-                  .sort((a, b) => b.count - a.count || a.reg.name.localeCompare(b.reg.name, 'ar'));
-                if (regionRows.length === 0) return null;
-                const lead = regionRows[0];
-                return (
-                <div className="mt-5">
-                  <p className="text-sm leading-relaxed text-[var(--color-muted)]">
-                    أكثر العروض المنشورة في{' '}
-                    <span className="font-semibold text-[var(--color-ink)]">{lead.reg.name}</span>
-                    {' '}بعدد{' '}
-                    <span className="tabular-nums font-semibold text-[var(--color-ink)]">{lead.count}</span>.
-                  </p>
-                  <div className="mt-3 flex items-center justify-between gap-4 flex-wrap">
-                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 max-w-full">
-                    <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--color-muted)] whitespace-nowrap shrink-0 me-1">
-                      <MapPin size={13} className="text-[var(--color-gold)]" aria-hidden="true" />
-                      <span>حسب المنطقة:</span>
-                    </span>
-                    {regionRows.map(({ reg, count }) => (
-                      <button
-                        key={reg.id}
-                        type="button"
-                        onClick={() =>
-                          navigate('listings', {
-                            listingFilters: { ...DEFAULT_FILTERS, regionId: reg.id },
-                          })
-                        }
-                        className="min-h-11 px-3 py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-gold)] hover:bg-[var(--color-cream)]/70 text-xs font-semibold text-[var(--color-ink)] whitespace-nowrap shrink-0 transition-colors cursor-pointer inline-flex items-center gap-1.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-gold)]"
+                {/* Filter Info & Sort Row */}
+                <div className="mb-4 flex items-center justify-between gap-2 sm:gap-4 flex-wrap">
+                  <div className="flex min-h-9 min-w-0 flex-wrap items-center gap-2 text-[12px] text-[var(--color-muted)]">
+                    <SlidersHorizontal className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    {homeBreedFilter !== 'all' || homeRegionFilter !== 'all' ? (
+                      <>
+                        {homeBreedFilter !== 'all' && (
+                          <span className="rounded-md bg-[var(--color-cream)] px-2.5 py-1.5 font-semibold text-[var(--color-ink)]">
+                            {trBreedName(
+                              bootstrap.breeds.find((b) => b.id === homeBreedFilter)?.name,
+                              lang
+                            )}
+                          </span>
+                        )}
+                        {homeRegionFilter !== 'all' && (
+                          <span className="rounded-md bg-[var(--color-cream)] px-2.5 py-1.5 font-semibold text-[var(--color-ink)]">
+                            {trRegionName(
+                              bootstrap.regions.find((r) => r.id === homeRegionFilter)?.name,
+                              lang
+                            )}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setHomeBreedFilter('all');
+                            setHomeRegionFilter('all');
+                            setHomePage(1);
+                          }}
+                          className="inline-flex items-center gap-1 font-bold text-[var(--color-gold-hover)] dark:text-[var(--color-gold)] hover:underline cursor-pointer"
+                        >
+                          <X className="h-3.5 w-3.5" aria-hidden="true" />
+                          <span>{isEn ? 'Clear filters' : 'مسح الفلاتر'}</span>
+                        </button>
+                      </>
+                    ) : (
+                      <span>
+                        {isEn
+                          ? 'Listings across all regions of Saudi Arabia'
+                          : 'عروض من جميع مناطق المملكة'}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    {bootstrap.regions.length > 0 && (
+                      <label className="flex shrink-0 items-center gap-2 text-[12px] font-semibold text-[var(--color-muted)]">
+                        <MapPin className="h-3.5 w-3.5 text-[var(--color-gold)]" aria-hidden="true" />
+                        <select
+                          aria-label={isEn ? 'Filter by region' : 'تصفية حسب المنطقة'}
+                          value={homeRegionFilter}
+                          onChange={(e) => {
+                            setHomeRegionFilter(e.target.value);
+                            setHomePage(1);
+                          }}
+                          className="h-10 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-[13px] font-semibold text-[var(--color-ink)] outline-none focus:border-[var(--color-gold)] cursor-pointer"
+                        >
+                          <option value="all">{isEn ? 'All Regions' : 'كل المناطق'}</option>
+                          {bootstrap.regions
+                            .filter((reg) =>
+                              publishedListings.some((listing) => listing.regionId === reg.id)
+                            )
+                            .map((reg) => (
+                              <option key={reg.id} value={reg.id}>
+                                {trRegionName(reg.name, lang)}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                    )}
+
+                    <label className="flex shrink-0 items-center gap-2 text-[12px] font-semibold text-[var(--color-muted)]">
+                      <span>{isEn ? 'Sort' : 'الترتيب'}</span>
+                      <select
+                        value={homeSortBy}
+                        onChange={(e) => {
+                          setHomeSortBy(
+                            e.target.value as 'recommended' | 'newest' | 'price-asc' | 'price-desc'
+                          );
+                          setHomePage(1);
+                        }}
+                        className="h-10 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-[13px] font-bold text-[var(--color-ink)] outline-none focus:border-[var(--color-gold)] cursor-pointer"
                       >
-                        <span>{reg.name}</span>
-                        <span className="tabular-nums text-[var(--color-green-ink)]">{count}</span>
+                        <option value="recommended">{isEn ? 'Recommended' : 'المقترحة'}</option>
+                        <option value="newest">{isEn ? 'Newest' : 'الأحدث'}</option>
+                        <option value="price-asc">{isEn ? 'Lowest price' : 'الأقل سعراً'}</option>
+                        <option value="price-desc">{isEn ? 'Highest price' : 'الأعلى سعراً'}</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Listings Grid or Empty State */}
+                {homeListings.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-[var(--color-border)] bg-[var(--color-cream)]/45 px-6 py-14 text-center">
+                    <Search
+                      className="mx-auto h-7 w-7 text-[var(--color-gold)]"
+                      aria-hidden="true"
+                    />
+                    <h3 className="mt-4 text-[18px] font-extrabold text-[var(--color-ink)]">
+                      {homeBreedFilter !== 'all'
+                        ? isEn
+                          ? `No listings published for "${
+                              trBreedName(
+                                bootstrap.breeds.find((b) => b.id === homeBreedFilter)?.name,
+                                lang
+                              ) || 'selected breed'
+                            }" right now.`
+                          : `لا توجد إعلانات منشورة حالياً لسلالة «${
+                              bootstrap.breeds.find((b) => b.id === homeBreedFilter)?.name ||
+                              'المحددة'
+                            }».`
+                        : isEn
+                        ? 'No listings found matching these filters.'
+                        : 'لم يتم العثور على إعلانات بهذه الفلاتر.'}
+                    </h3>
+                    <p className="mt-2 text-[14px] text-[var(--color-muted)] max-w-xl mx-auto">
+                      {isEn
+                        ? 'Try choosing another breed or region, or browse all marketplace listings.'
+                        : 'جرّب اختيار سلالة أو منطقة أخرى، أو استعرض جميع الإعلانات المتاحة.'}
+                    </p>
+                    <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHomeBreedFilter('all');
+                          setHomeRegionFilter('all');
+                          setHomePage(1);
+                        }}
+                        className="rounded-lg border border-[var(--color-green)] bg-[var(--color-green)] px-5 py-2.5 text-[13px] font-bold text-white hover:bg-[var(--color-green-hover)] cursor-pointer"
+                      >
+                        {isEn ? 'Show All Breeds' : 'عرض جميع السلالات'}
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => navigate('breeds')}
+                        className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-2.5 text-[13px] font-bold text-[var(--color-ink)] hover:border-[var(--color-gold)] cursor-pointer"
+                      >
+                        {isEn ? 'Breeds & Price Guide' : 'دليل السلالات والأسعار'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid gap-2.5 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+                    {homeListings.map((listing) => (
+                      <ListingCard
+                        key={listing.id}
+                        variant="showcase"
+                        currentUserId={bootstrap.currentUser?.id || null}
+                        listing={listing}
+                        category={bootstrap.categories.find((c) => c.id === listing.categoryId)}
+                        breed={bootstrap.breeds.find((b) => b.id === listing.breedId)}
+                        subCategory={bootstrap.categories.find((c) => c.id === listing.subCategoryId)}
+                        region={bootstrap.regions.find((r) => r.id === listing.regionId)}
+                        seller={bootstrap.sellers.find((s) => s.userId === listing.sellerId)}
+                        isFavorite={bootstrap.favoriteIds.includes(listing.id)}
+                        isLiked={(bootstrap.likedListingIds || []).includes(listing.id)}
+                        onSelect={handleSelectListing}
+                        onSelectSeller={handleSelectSeller}
+                        onToggleFavorite={handleToggleFavorite}
+                        onToggleLike={handleToggleLike}
+                      />
                     ))}
                   </div>
+                )}
+
+                {/* Showcase Pagination */}
+                {homeTotalPages > 1 && (
+                  <nav
+                    aria-label={isEn ? 'Listings pagination' : 'صفحات الإعلانات'}
+                    className="mt-8 flex items-center justify-center gap-4"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setHomePage((p) => Math.max(1, p - 1))}
+                      disabled={safeHomePage <= 1}
+                      className="inline-flex h-10 items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 text-[13px] font-bold text-[var(--color-ink)] hover:border-[var(--color-gold)] disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+                    >
+                      {isEn ? (
+                        <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                      )}
+                      <span>{isEn ? 'Previous' : 'السابق'}</span>
+                    </button>
+                    <span className="text-[13px] font-semibold text-[var(--color-muted)] tabular-nums">
+                      {safeHomePage} / {homeTotalPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setHomePage((p) => Math.min(homeTotalPages, p + 1))}
+                      disabled={safeHomePage >= homeTotalPages}
+                      className="inline-flex h-10 items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 text-[13px] font-bold text-[var(--color-ink)] hover:border-[var(--color-gold)] disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+                    >
+                      <span>{isEn ? 'Next' : 'التالي'}</span>
+                      {isEn ? (
+                        <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                      ) : (
+                        <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                      )}
+                    </button>
+                  </nav>
+                )}
+
+                {/* Bottom Action Buttons */}
+                <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigate('listings', {
+                        listingFilters: {
+                          ...DEFAULT_FILTERS,
+                          breedId: homeBreedFilter,
+                          regionId: homeRegionFilter,
+                        },
+                      });
+                    }}
+                    className="min-h-[44px] inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-sm font-bold transition-colors cursor-pointer shadow-xs"
+                  >
+                    <span>
+                      {isEn
+                        ? `View All Listings (${publishedListingsTotal || publishedListings.length})`
+                        : `عرض جميع الإعلانات (${publishedListingsTotal || publishedListings.length})`}
+                    </span>
+                    {isEn ? (
+                      <ArrowRight size={16} aria-hidden="true" />
+                    ) : (
+                      <ArrowLeft size={16} aria-hidden="true" />
+                    )}
+                  </button>
 
                   <button
                     type="button"
-                    onClick={() => navigate('breeds')}
-                    className="hidden sm:inline-flex items-center gap-1.5 text-xs font-bold text-[var(--color-green-ink)] hover:underline whitespace-nowrap shrink-0 cursor-pointer"
+                    onClick={() => navigate('add')}
+                    className="min-h-[44px] inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-warm)] text-[var(--color-ink)] text-sm font-bold transition-colors cursor-pointer"
                   >
-                    <span>الأسعار الاسترشادية للسلالات</span>
-                    <ArrowLeft size={14} aria-hidden="true" />
+                    <Plus size={16} className="text-[var(--color-green-ink)]" aria-hidden="true" />
+                    <span>{isEn ? 'Post Listing' : 'أضف إعلانك'}</span>
                   </button>
-                  </div>
                 </div>
-                );
-              })()}
-
-              {homeListings.length === 0 ? (
-                <div className="mt-8 bg-[var(--color-cream)]/60 border border-[var(--color-border)] rounded-2xl p-8 text-center space-y-3">
-                  <p className="font-display text-lg font-bold text-[var(--color-ink)]">
-                    {homeBreedFilter !== 'all'
-                      ? `لا توجد إعلانات منشورة حالياً لسلالة «${
-                          bootstrap.breeds.find((b) => b.id === homeBreedFilter)?.name || 'المحددة'
-                        }»`
-                      : 'لا توجد إعلانات منشورة حالياً'}
-                  </p>
-                  <p className="text-sm text-[var(--color-muted)] max-w-xl mx-auto">
-                    {homeBreedFilter !== 'all'
-                      ? 'يمكنك عرض جميع السلالات أو استعراض دليل السلالات والأسعار الاسترشادية أو البحث في كامل السوق.'
-                      : 'تحقق لاحقاً أو أضف إعلانك الأول في السوق.'}
-                  </p>
-                  <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
-                    {homeBreedFilter !== 'all' && (
-                      <button
-                        type="button"
-                        onClick={() => setHomeBreedFilter('all')}
-                        className="min-h-[44px] px-5 py-2 rounded-xl bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-sm font-semibold cursor-pointer"
-                      >
-                        عرض جميع السلالات
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => navigate('breeds')}
-                      className="min-h-[44px] px-5 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-cream)] text-[var(--color-ink)] text-sm font-semibold cursor-pointer"
-                    >
-                      دليل السلالات والأسعار
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => navigate('listings', { listingFilters: DEFAULT_FILTERS })}
-                      className="min-h-[44px] px-5 py-2 rounded-xl border border-[var(--color-green-ink)] text-[var(--color-green-ink)] hover:bg-[var(--color-green)] hover:text-white text-sm font-semibold cursor-pointer"
-                    >
-                      استعراض دليل الإعلانات
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="mt-7 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
-                  {homeListings.map((listing) => (
-                    <ListingCard
-                      key={listing.id}
-                      listing={listing}
-                      category={bootstrap.categories.find((c) => c.id === listing.categoryId)}
-                      breed={bootstrap.breeds.find((b) => b.id === listing.breedId)}
-                      subCategory={bootstrap.categories.find((c) => c.id === listing.subCategoryId)}
-                      region={bootstrap.regions.find((r) => r.id === listing.regionId)}
-                      seller={bootstrap.sellers.find((s) => s.userId === listing.sellerId)}
-                      isFavorite={bootstrap.favoriteIds.includes(listing.id)}
-                      isLiked={(bootstrap.likedListingIds || []).includes(listing.id)}
-                      onSelect={handleSelectListing}
-                      onSelectSeller={handleSelectSeller}
-                      onToggleFavorite={handleToggleFavorite}
-                      onToggleLike={handleToggleLike}
-                    />
-                  ))}
-                </div>
-              )}
-
-              <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigate('listings', {
-                      listingFilters: {
-                        ...DEFAULT_FILTERS,
-                        breedId: homeBreedFilter,
-                      },
-                    });
-                  }}
-                  className="min-h-[44px] inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-sm font-bold transition-colors cursor-pointer shadow-xs"
-                >
-                  <span>
-                    عرض جميع الإعلانات ({publishedListingsTotal || publishedListings.length})
-                  </span>
-                  <ArrowLeft size={16} aria-hidden="true" />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => navigate('add')}
-                  className="min-h-[44px] inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-warm)] text-[var(--color-ink)] text-sm font-bold transition-colors cursor-pointer"
-                >
-                  <Plus size={16} className="text-[var(--color-green-ink)]" aria-hidden="true" />
-                  <span>أضف إعلانك</span>
-                </button>
-              </div>
               </div>
             </section>
 
-            {/* Interactive Market Command & Smart Tools Showcase Banner */}
-            <HomeCommandBanner
-              publishedCount={publishedListingsTotal || publishedListings.length}
-              verifiedBreedersCount={verifiedHomeSellers.length}
-              breedsCount={bootstrap.breeds.length}
-              commissionRatePercent={bootstrap.commissionSettings?.commissionRatePercent ?? 1}
-              onNavigate={(nextPage, opts) =>
-                navigate(nextPage, {
-                  listingFilters: opts?.listingFilters
-                    ? { ...DEFAULT_FILTERS, ...opts.listingFilters }
-                    : undefined,
-                })
-              }
-            />
-
-            {/* Section 3: Saudi Breeds & Indicative Market Prices */}
-            <HomeBreedsSection
-              breeds={bootstrap.breeds}
-              onFilterByBreed={(breedId) =>
-                navigate('listings', { listingFilters: { ...DEFAULT_FILTERS, breedId } })
-              }
-              onOpenBreedsDirectory={() => navigate('breeds')}
-            />
-
-            {/* Section 4: Saudi Regional Discovery */}
-            <HomeRegionsSection
-              regions={bootstrap.regions}
+            {/* Celebim-Matched Lower Homepage Sections (Arabic & Souq Al-Ghanam Palette) */}
+            <HomeCelebimLowerSections
               publishedListings={publishedListings}
-              onFilterByRegion={(regionId) =>
-                navigate('listings', { listingFilters: { ...DEFAULT_FILTERS, regionId } })
-              }
-              onBrowseAll={() => navigate('listings', { listingFilters: DEFAULT_FILTERS })}
-            />
-
-            {/* Section 5: Smart Calculators & Field Services */}
-            <HomeServicesSection onNavigate={(nextPage) => navigate(nextPage)} />
-
-            {/* Section 6: Verified Breeders Showcase */}
-            <HomeBreedersSection
-              verifiedSellers={verifiedHomeSellers}
-              otherSellers={otherHomeSellers}
-              showOtherSellers={false}
-              onSelectSeller={handleSelectSeller}
-              onOpenBreedersDirectory={() => navigate('breeders')}
-              onOpenBreedsGuide={() => navigate('breeds')}
-            />
-
-            {/* Section 7: How It Works & Trust Standards */}
-            <HomeTrustSection
-              onOpenBreedersDirectory={() => navigate('breeders')}
-              onAddListing={() => navigate('add')}
-            />
-
-            {/* Section 8: Field Guides & Market Advice */}
-            <HomeGuidesPreviewSection
-              articles={bootstrap.articles || []}
-              onOpenGuides={() => navigate('guides')}
-            />
-
-            {/* Section 9: Transparent Plans & Pricing */}
-            <HomePricingSection
+              regions={bootstrap.regions}
+              commissionSettings={bootstrap.commissionSettings}
+              onOpenListing={(listingId) => navigate('detail', { listingId })}
               onNavigate={(nextPage) => navigate(nextPage)}
-              onContactSupport={() => navigate('contact')}
             />
 
-            {/* Section 10: Concise Direct Contact & Quick Access Closing Band */}
+            {/* Preserved Direct Contact & Quick Access Closing Band */}
             <HomeQuickContactSection onNavigate={(nextPage) => navigate(nextPage)} />
           </>
         )}
@@ -1659,10 +1712,6 @@ export default function App() {
               allBreeds={bootstrap.breeds}
               allRegions={bootstrap.regions}
               allSellers={bootstrap.sellers}
-              compareIds={compareIds}
-              compareListings={compareListings}
-              onToggleCompare={handleToggleCompare}
-              onClearCompare={handleClearCompare}
               onSelectListing={handleSelectListing}
               onEditListing={handleStartEditListing}
               onMarkSold={handleMarkSold}
@@ -1793,6 +1842,7 @@ export default function App() {
               }
             }}
             googleAuth={bootstrap.googleAuth}
+            facebookAuth={bootstrap.facebookAuth}
             onGoogleSuccess={handleGoogleAuthSuccess}
             onLogin={handleLogin}
             onRegister={handleRegister}
@@ -2102,6 +2152,7 @@ export default function App() {
             }}
             currentUser={bootstrap.currentUser}
             googleAuth={bootstrap.googleAuth}
+            facebookAuth={bootstrap.facebookAuth}
             allListings={allListings}
             categories={bootstrap.categories}
             breeds={bootstrap.breeds}
@@ -2118,6 +2169,7 @@ export default function App() {
             onBrowseListings={() => {
               navigate('listings', { listingFilters: DEFAULT_FILTERS });
             }}
+            onOpenPricing={() => navigate('pricing')}
             onAddListing={() => navigate('add')}
             onGoHome={() => navigate('home')}
             onEditListing={handleStartEditListing}
@@ -2237,28 +2289,6 @@ export default function App() {
               className="w-full h-11 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-ink)] focus:outline-none focus:border-[var(--color-green-ink)]"
             />
           </div>
-
-          {bootstrap.currentUser?.role !== 'admin' && (
-            <div>
-              <label
-                htmlFor="modal-complete-role"
-                className="block text-xs font-semibold text-[var(--color-ink)] mb-1.5"
-              >
-                نوع الحساب
-              </label>
-              <select
-                id="modal-complete-role"
-                value={profileCompletionRole}
-                onChange={(e) =>
-                  setProfileCompletionRole(e.target.value === 'seller' ? 'seller' : 'buyer')
-                }
-                className="w-full h-11 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-ink)] focus:outline-none focus:border-[var(--color-green-ink)]"
-              >
-                <option value="buyer">مشتري</option>
-                <option value="seller">بائع / مربي</option>
-              </select>
-            </div>
-          )}
 
           <div className="flex flex-wrap items-center justify-end gap-2.5 pt-2">
             <button

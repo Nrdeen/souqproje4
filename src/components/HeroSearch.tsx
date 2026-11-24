@@ -655,7 +655,7 @@ export function HeroSearch({
       {/* Compact Floating White Search Card Near Bottom of Hero */}
       <section
         aria-label={isEn ? 'Quick livestock search' : 'منطقة البحث السريع في إعلانات المواشي'}
-        className="relative z-20 -mt-6 sm:-mt-8 lg:-mt-10 pb-5 sm:pb-6"
+        className="relative z-20 -mt-6 sm:-mt-8 lg:-mt-10 pb-2.5 sm:pb-3.5"
       >
         <div className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8">
           <form

@@ -1,34 +1,38 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowLeft,
   ArrowRight,
   BadgeDollarSign,
+  Calendar,
   Check,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Clock,
   Copy,
   Flag,
   Heart,
   Home,
+  Info,
+  Layers,
   LogIn,
   MapPin,
   Maximize2,
   MessageSquare,
-  Minus,
+  Navigation,
   Pencil,
   Phone,
   Play,
-  Plus,
-  Scale,
   Share2,
   ShieldCheck,
   Sparkles,
+  Tag,
   ThumbsUp,
-  Trash2,
   User as UserIcon,
   UserPlus,
-  X,
+  Weight,
   XCircle,
+  Zap,
 } from 'lucide-react';
 import type {
   CommissionEligibility,
@@ -58,10 +62,9 @@ import { ImageLightbox } from './ImageLightbox';
 import { ListingCard } from './ListingCard';
 import { ListingCommentsSection } from './ListingCommentsSection';
 import { isSellerVerified, VerifiedSellerBadge } from './VerifiedSellerBadge';
-import { buildSellerContactLinks } from '../lib/marketplace-helpers';
+import { buildSellerContactLinks, resolveListingStatusBadge } from '../lib/marketplace-helpers';
 import { api } from '../lib/api';
 import type { AuthMode } from '../lib/router';
-import { DynamicHeroBanner } from './DynamicHeroBanner';
 
 interface ListingDetailViewProps {
   listing: Listing;
@@ -95,10 +98,6 @@ interface ListingDetailViewProps {
   allBreeds: Breed[];
   allRegions: Region[];
   allSellers: SellerProfile[];
-  compareIds: string[];
-  compareListings: Listing[];
-  onToggleCompare: (listingId: string) => void;
-  onClearCompare: () => void;
   onSelectListing: (listing: Listing) => void;
   onEditListing?: (listing: Listing) => void;
   onMarkSold?: (listingId: string) => Promise<void>;
@@ -175,10 +174,6 @@ export function ListingDetailView({
   allBreeds,
   allRegions,
   allSellers,
-  compareIds,
-  compareListings,
-  onToggleCompare,
-  onClearCompare,
   onSelectListing,
   onEditListing,
   onMarkSold,
@@ -206,6 +201,7 @@ export function ListingDetailView({
   const [offeredPrice, setOfferedPrice] = useState(
     String(listing.expectedPrice || Math.round((listing.priceAmount * 0.92) / 10) * 10)
   );
+  const [quickOfferInput, setQuickOfferInput] = useState('');
   const [offerQuantity, setOfferQuantity] = useState('1');
   const [offerNote, setOfferNote] = useState('');
   const [offerSubmitting, setOfferSubmitting] = useState(false);
@@ -225,6 +221,7 @@ export function ListingDetailView({
   } | null>(null);
   const [revealingContact, setRevealingContact] = useState(false);
   const [contactError, setContactError] = useState('');
+  const [copiedPhone, setCopiedPhone] = useState(false);
   const [markingSold, setMarkingSold] = useState(false);
   const [markSoldOpen, setMarkSoldOpen] = useState(false);
   const [requestingFeature, setRequestingFeature] = useState(false);
@@ -234,52 +231,25 @@ export function ListingDetailView({
   const [manualShareUrlVisible, setManualShareUrlVisible] = useState(false);
   const [localToast, setLocalToast] = useState<string | null>(null);
   const copyTimerRef = useRef<number | null>(null);
+  const copyPhoneTimerRef = useRef<number | null>(null);
   const localToastTimerRef = useRef<number | null>(null);
 
-  // Livestock Comparison State
-  const [comparePickId, setComparePickId] = useState('');
-  const [showDiffsOnly, setShowDiffsOnly] = useState(false);
-  const compareSectionRef = useRef<HTMLDivElement | null>(null);
   const directMsgRef = useRef<HTMLTextAreaElement | null>(null);
   const galleryTouchRef = useRef<{ x: number; y: number } | null>(null);
   const activeListingIdRef = useRef(listing.id);
   activeListingIdRef.current = listing.id;
   const reportCloseTimerRef = useRef<number | null>(null);
 
-  const isInCompare = compareIds.includes(listing.id);
-  const availableToCompare = useMemo(
-    () => comparableListings.filter((item) => !compareIds.includes(item.id)),
-    [comparableListings, compareIds]
-  );
-
-  useEffect(() => {
-    if (availableToCompare.length > 0 && !availableToCompare.some((l) => l.id === comparePickId)) {
-      const nextPreferred =
-        availableToCompare.find((l) => l.id !== listing.id) || availableToCompare[0];
-      setComparePickId(nextPreferred.id);
-    } else if (availableToCompare.length === 0) {
-      setComparePickId('');
-    }
-  }, [availableToCompare, comparePickId, listing.id]);
-
   useEffect(() => {
     return () => {
-      if (copyTimerRef.current !== null) {
-        window.clearTimeout(copyTimerRef.current);
-      }
-      if (localToastTimerRef.current !== null) {
-        window.clearTimeout(localToastTimerRef.current);
-      }
-      if (reportCloseTimerRef.current !== null) {
-        window.clearTimeout(reportCloseTimerRef.current);
-      }
+      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+      if (copyPhoneTimerRef.current !== null) window.clearTimeout(copyPhoneTimerRef.current);
+      if (localToastTimerRef.current !== null) window.clearTimeout(localToastTimerRef.current);
+      if (reportCloseTimerRef.current !== null) window.clearTimeout(reportCloseTimerRef.current);
     };
   }, []);
 
-  const [bannerSimQty, setBannerSimQty] = useState<number>(() => Math.max(1, listing.quantity));
-
   useEffect(() => {
-    setBannerSimQty(Math.max(1, listing.quantity));
     if (reportCloseTimerRef.current !== null) {
       window.clearTimeout(reportCloseTimerRef.current);
       reportCloseTimerRef.current = null;
@@ -287,6 +257,10 @@ export function ListingDetailView({
     if (copyTimerRef.current !== null) {
       window.clearTimeout(copyTimerRef.current);
       copyTimerRef.current = null;
+    }
+    if (copyPhoneTimerRef.current !== null) {
+      window.clearTimeout(copyPhoneTimerRef.current);
+      copyPhoneTimerRef.current = null;
     }
     if (localToastTimerRef.current !== null) {
       window.clearTimeout(localToastTimerRef.current);
@@ -296,6 +270,7 @@ export function ListingDetailView({
     setLightboxOpen(false);
     setManualShareUrlVisible(false);
     setCopiedLink(false);
+    setCopiedPhone(false);
     setLocalToast(null);
     setShowPhone(false);
     setRevealedContact(null);
@@ -309,6 +284,7 @@ export function ListingDetailView({
     setOfferedPrice(
       String(listing.expectedPrice || Math.round((listing.priceAmount * 0.92) / 10) * 10)
     );
+    setQuickOfferInput('');
     setOfferQuantity('1');
     setOfferNote('');
     setOfferSubmitting(false);
@@ -322,8 +298,7 @@ export function ListingDetailView({
     setMarkingSold(false);
     setMarkSoldOpen(false);
     setRequestingFeature(false);
-    setShowDiffsOnly(false);
-  }, [listing.id]);
+  }, [listing.id, listing.title, listing.expectedPrice, listing.priceAmount]);
 
   const images = useMemo(
     () =>
@@ -364,8 +339,10 @@ export function ListingDetailView({
   const listingOffers = offers.filter((o) => o.listingId === listing.id);
   const totalHerdValue =
     listing.quantity > 1 ? listing.priceAmount * listing.quantity : null;
+  const isPublished = listing.status === 'Published';
+  const statusBadge = resolveListingStatusBadge(listing, { lang: 'ar' });
+  const isNewListing = statusBadge?.kind === 'new';
 
-  // Derive up to 3 related listings using existing comparableListings data (no extra network call)
   const relatedListings = useMemo(() => {
     const candidates = comparableListings.filter(
       (item) => item.id !== listing.id && item.status === 'Published'
@@ -396,9 +373,9 @@ export function ListingDetailView({
       await onStartConversation(targetListingId, messageText.trim());
       if (activeListingIdRef.current !== targetListingId) return;
       setMsgSuccess(true);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (activeListingIdRef.current !== targetListingId) return;
-      setMsgError(err?.message || 'تعذر إرسال رسالتك، حاول مرة أخرى');
+      setMsgError(err instanceof Error ? err.message : 'تعذر إرسال رسالتك، حاول مرة أخرى');
     } finally {
       if (activeListingIdRef.current === targetListingId) {
         setSendingMsg(false);
@@ -406,18 +383,36 @@ export function ListingDetailView({
     }
   };
 
-  const handleOpenOfferModal = () => {
+  const handleOpenOfferModal = (presetPrice?: number) => {
     if (!currentUser) {
       onRequireAuth?.('login');
       return;
     }
     setOfferError('');
-    setOfferedPrice(
-      String(listing.expectedPrice || Math.round((listing.priceAmount * 0.92) / 10) * 10)
-    );
+    if (presetPrice && Number.isFinite(presetPrice) && presetPrice > 0) {
+      setOfferedPrice(String(presetPrice));
+    } else {
+      setOfferedPrice(
+        String(listing.expectedPrice || Math.round((listing.priceAmount * 0.92) / 10) * 10)
+      );
+    }
     setOfferQuantity('1');
     setOfferNote('');
     setShowOfferModal(true);
+  };
+
+  const handleQuickOfferSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser) {
+      onRequireAuth?.('login');
+      return;
+    }
+    const parsed = Number(quickOfferInput);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      showToastNotification('يرجى إدخال قيمة السوم بالريال السعودي');
+      return;
+    }
+    handleOpenOfferModal(parsed);
   };
 
   const handleOfferSubmit = async (e: React.FormEvent) => {
@@ -448,10 +443,11 @@ export function ListingDetailView({
       });
       if (activeListingIdRef.current !== targetListingId) return;
       setShowOfferModal(false);
+      setQuickOfferInput('');
       setOfferSuccess(true);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (activeListingIdRef.current !== targetListingId) return;
-      setOfferError(err?.message || 'تعذر إرسال عرض السعر');
+      setOfferError(err instanceof Error ? err.message : 'تعذر إرسال عرض السعر');
     } finally {
       if (activeListingIdRef.current === targetListingId) {
         setOfferSubmitting(false);
@@ -465,9 +461,9 @@ export function ListingDetailView({
     const targetListingId = listing.id;
     try {
       await onReportListing(targetListingId, reportReason, reportDetails);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (activeListingIdRef.current !== targetListingId) return;
-      setReportError(err?.message || 'تعذر إرسال البلاغ، حاول مرة أخرى');
+      setReportError(err instanceof Error ? err.message : 'تعذر إرسال البلاغ، حاول مرة أخرى');
       return;
     }
     if (activeListingIdRef.current !== targetListingId) return;
@@ -544,13 +540,30 @@ export function ListingDetailView({
         setRevealedContact(nextContact);
         setShowPhone(true);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (activeListingIdRef.current !== targetListingId) return;
-      setContactError(err?.message || 'تعذر إظهار بيانات التواصل حالياً، حاول مرة أخرى');
+      setContactError(
+        err instanceof Error ? err.message : 'تعذر إظهار بيانات التواصل حالياً، حاول مرة أخرى'
+      );
     } finally {
       if (activeListingIdRef.current === targetListingId) {
         setRevealingContact(false);
       }
+    }
+  };
+
+  const handleCopyPhone = async () => {
+    const rawPhone = contactLinks.phoneDisplay || revealedContact?.phone;
+    if (!rawPhone) return;
+    const copied = await copyTextWithFallback(rawPhone);
+    if (copied) {
+      setCopiedPhone(true);
+      if (copyPhoneTimerRef.current !== null) window.clearTimeout(copyPhoneTimerRef.current);
+      copyPhoneTimerRef.current = window.setTimeout(() => {
+        setCopiedPhone(false);
+        copyPhoneTimerRef.current = null;
+      }, 2200);
+      showToastNotification('تم نسخ رقم الجوال');
     }
   };
 
@@ -566,8 +579,8 @@ export function ListingDetailView({
       await api.requestListingFeatured(listing.id);
       await onRefreshData?.();
       onNotify?.('تم تسجيل طلب تمييز الإعلان؛ يمكنك تأكيد الحوالة من سجل العمولة في لوحة حسابي');
-    } catch (err: any) {
-      onNotify?.(err?.message || 'تعذر تسجيل طلب التمييز');
+    } catch (err: unknown) {
+      onNotify?.(err instanceof Error ? err.message : 'تعذر تسجيل طلب التمييز');
     } finally {
       setRequestingFeature(false);
     }
@@ -623,966 +636,739 @@ export function ListingDetailView({
     }, 220);
   };
 
+  const sellerInitials = (seller?.displayName || 'م')
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part.charAt(0))
+    .join('')
+    .toUpperCase();
+
+  const locationSummary = [region?.name, listing.city].filter(Boolean).join('، ');
+  const mapsSearchUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+    [listing.city, region?.name, 'السعودية'].filter(Boolean).join(', ')
+  )}`;
+
+  const specCards: Array<{
+    label: string;
+    value: string;
+    icon: typeof Tag;
+    highlight?: boolean;
+  }> = [
+    {
+      label: 'التصنيف / النوع',
+      value: category?.name || 'أغنام',
+      icon: Layers,
+    },
+    {
+      label: 'السلالة',
+      value: `${breed?.name || 'غير محدد'}${subCategory ? ` · ${subCategory.name}` : ''}`,
+      icon: Sparkles,
+    },
+    {
+      label: 'الجنس / الفئة',
+      value: listing.sex || 'غير محدد',
+      icon: Tag,
+    },
+    {
+      label: 'العمر التقريبي',
+      value: `${listing.ageMonths} أشهر`,
+      icon: Clock,
+    },
+    {
+      label: 'الوزن التقريبي',
+      value: `${listing.weightKg} كجم`,
+      icon: Weight,
+    },
+    {
+      label: 'العدد المتاح',
+      value: `${listing.quantity} رأس`,
+      icon: CheckCircle2,
+    },
+    {
+      label: 'التحصين البيطري',
+      value: listing.vaccinated ? 'محصّن (دموي ومعوي)' : 'حسب المعاينة',
+      icon: ShieldCheck,
+      highlight: listing.vaccinated,
+    },
+    {
+      label: 'آلية البيع والتفاوض',
+      value: allowsOffers
+        ? 'يقبل عروض السوم'
+        : listing.isNegotiable
+        ? 'قابل للتفاوض'
+        : 'سعر نهائي',
+      icon: BadgeDollarSign,
+    },
+    {
+      label: 'المنطقة والمدينة',
+      value: region?.name ? `${region.name} — ${listing.city}` : listing.city,
+      icon: MapPin,
+    },
+  ];
+
   return (
-    <section className="bg-[var(--color-canvas)] transition-colors overflow-x-clip">
-      {/* Creative Interactive Listing Deal & Spec Command Banner */}
-      <DynamicHeroBanner
-        pageKey="detail"
-        variant="emerald-royal"
-        headingAs="h2"
-        compact
-          breadcrumbs={[
-            ...(onGoHome ? [{ label: 'الرئيسية', onClick: onGoHome }] : []),
-            { label: 'دليل الإعلانات', onClick: onBack },
-            ...(category ? [{ label: category.name }] : []),
-            ...(breed ? [{ label: breed.name }] : []),
-          ]}
-          contextLabel={`${region ? region.name : ''}${listing.city ? ` · ${listing.city}` : ''}`}
-          eyebrow={
-            breed?.name
-              ? `عرض موثق · ${breed.name}${category ? ` (${category.name})` : ''}`
-              : 'عرض مواشي مباشر في السوق'
-          }
-          title={listing.title}
-          subHeadline={`السعر المطلوب ${formatPriceSar(listing.priceAmount)} للرأس · متاح ${listing.quantity} ${
-            listing.quantity === 1 ? 'رأس' : 'رؤوس'
-          } بمتوسط وزن ${listing.weightKg} كجم وعمر ${listing.ageMonths} شهور${
-            listing.vaccinated ? ' · محصّن بالكامل' : ''
-          }.`}
-          stats={[
-            {
-              label: 'سعر الرأس',
-              value: formatPriceSar(listing.priceAmount),
-              accent: true,
-            },
-            {
-              label: 'الكمية المتاحة',
-              value: `${listing.quantity} رأس`,
-            },
-            {
-              label: 'العمر / الوزن',
-              value: `${listing.ageMonths} ش · ${listing.weightKg} كجم`,
-            },
-          ]}
-          actions={
-            <>
-              <button
-                type="button"
-                onClick={onBack}
-                className="min-h-[40px] px-3.5 py-2 rounded-xl border border-white/25 bg-white/[0.08] hover:bg-white/[0.15] inline-flex items-center gap-2 text-xs sm:text-sm font-semibold text-white transition-colors cursor-pointer whitespace-nowrap"
-              >
-                <ArrowRight size={15} aria-hidden="true" />
-                <span>العودة إلى الإعلانات</span>
-              </button>
-
-              {listing.status === 'Published' && (
-                <button
-                  type="button"
-                  onClick={() => onToggleCompare(listing.id)}
-                  className={`min-h-[40px] px-3.5 py-2 rounded-xl border text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
-                    isInCompare
-                      ? 'bg-[#F4C569] border-[#F4C569] text-[#0B231A]'
-                      : 'bg-white/[0.08] border-white/25 text-white hover:border-[#F4C569]'
-                  }`}
-                >
-                  <Scale size={14} aria-hidden="true" />
-                  <span>{isInCompare ? 'ضمن المقارنة' : 'مقارنة'}</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={handleCopyShareLink}
-                aria-label="مشاركة الإعلان ونسخ الرابط"
-                className={`min-h-[40px] px-3.5 py-2 rounded-xl border text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  copiedLink
-                    ? 'bg-[#F4C569] border-[#F4C569] text-[#0B231A]'
-                    : 'bg-white/[0.08] border-white/25 text-white hover:border-[#F4C569]'
-                }`}
-              >
-                {copiedLink ? (
-                  <Check size={14} aria-hidden="true" />
-                ) : (
-                  <Share2 size={14} className="text-[#F4C569]" aria-hidden="true" />
-                )}
-                <span>{copiedLink ? 'تم نسخ الرابط' : 'مشاركة الإعلان'}</span>
-              </button>
-            </>
-          }
-          visual={
-            <div className="flex flex-col justify-between h-full gap-3">
-              <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-white/15">
-                <div className="min-w-0">
-                  <p className="text-[11px] font-semibold text-emerald-100/75">
-                    حاسبة الكمية والصفقة التفاعلية
-                  </p>
-                  <p className="font-display text-sm font-extrabold text-white truncate">
-                    احسب التكلفة حسب العدد المطلوب
-                  </p>
-                </div>
-                <span className="font-display text-xs font-extrabold text-[#F4C569] tabular-nums shrink-0">
-                  ~{Math.round(listing.priceAmount / Math.max(1, listing.weightKg))} ر.س/كجم
-                </span>
-              </div>
-
-              <div className="space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-bold text-emerald-100/85">
-                    العدد المطلوب:
-                  </span>
-                  <div className="inline-flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      aria-label="إنقاص العدد"
-                      onClick={() => setBannerSimQty((q) => Math.max(1, q - 1))}
-                      disabled={bannerSimQty <= 1}
-                      className="w-8 h-8 rounded-lg border border-white/20 bg-white/[0.07] hover:border-[#F4C569] disabled:opacity-40 text-white flex items-center justify-center cursor-pointer"
-                    >
-                      <Minus size={13} aria-hidden="true" />
-                    </button>
-                    <span className="min-w-[52px] text-center font-display text-base font-extrabold text-[#F4C569] tabular-nums">
-                      {bannerSimQty}
-                    </span>
-                    <button
-                      type="button"
-                      aria-label="زيادة العدد"
-                      onClick={() =>
-                        setBannerSimQty((q) => Math.min(Math.max(1, listing.quantity), q + 1))
-                      }
-                      disabled={bannerSimQty >= Math.max(1, listing.quantity)}
-                      className="w-8 h-8 rounded-lg border border-white/20 bg-white/[0.07] hover:border-[#F4C569] disabled:opacity-40 text-white flex items-center justify-center cursor-pointer"
-                    >
-                      <Plus size={13} aria-hidden="true" />
-                    </button>
-                  </div>
-                </div>
-
-                {listing.quantity > 1 && (
-                  <input
-                    type="range"
-                    min={1}
-                    max={listing.quantity}
-                    value={bannerSimQty}
-                    aria-label="تحديد عدد الرؤوس"
-                    onChange={(e) => setBannerSimQty(Number(e.target.value))}
-                    className="w-full accent-[#F4C569] cursor-pointer"
-                  />
-                )}
-
-                <div className="p-3 rounded-xl bg-white/[0.06] border border-white/12 flex items-baseline justify-between gap-2">
-                  <span className="text-xs font-semibold text-emerald-100/80">
-                    التكلفة التقديرية ({bannerSimQty} رأس)
-                  </span>
-                  <span className="font-display text-lg font-extrabold text-[#F4C569] tabular-nums">
-                    {formatPriceSar(bannerSimQty * listing.priceAmount)}
-                  </span>
-                </div>
-              </div>
-
-              {!isOwner && listing.status === 'Published' && (
-                <div className="grid grid-cols-2 gap-2">
-                  {allowsOffers && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!currentUser) {
-                          onRequireAuth?.('login');
-                          return;
-                        }
-                        setOfferQuantity(String(bannerSimQty));
-                        setShowOfferModal(true);
-                      }}
-                      className="min-h-[38px] px-3 rounded-xl bg-[#F4C569] hover:bg-[#ffd582] text-[#0B231A] text-xs font-extrabold transition-colors cursor-pointer"
-                    >
-                      تقديم سوم ({bannerSimQty})
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={focusDirectMessageForm}
-                    className={`min-h-[38px] px-3 rounded-xl border border-white/20 bg-white/[0.08] hover:border-[#F4C569] text-white text-xs font-bold transition-colors cursor-pointer ${
-                      allowsOffers ? '' : 'col-span-2'
-                    }`}
-                  >
-                    مراسلة المربي
-                  </button>
-                </div>
-              )}
-            </div>
-          }
-          interactiveDock={
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-              <div className="flex flex-wrap items-center gap-2">
-                <a
-                  href="#listing-comments-section"
-                  className="min-h-[32px] px-3 py-1 rounded-xl bg-white/[0.07] hover:bg-white/[0.14] border border-white/15 hover:border-[#F4C569]/55 text-white font-semibold inline-flex items-center gap-1.5 transition-colors"
-                >
-                  <MessageSquare size={12} className="text-[#F4C569]" aria-hidden="true" />
-                  <span>الأسئلة والتعليقات</span>
-                </a>
-                {!isOwner && (
-                  <button
-                    type="button"
-                    onClick={focusDirectMessageForm}
-                    className="min-h-[32px] px-3 py-1 rounded-xl bg-white/[0.07] hover:bg-white/[0.14] border border-white/15 hover:border-[#F4C569]/55 text-white font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
-                  >
-                    <Phone size={12} className="text-[#F4C569]" aria-hidden="true" />
-                    <span>تواصل مباشر</span>
-                  </button>
-                )}
-              </div>
-              <span className="text-[11px] font-semibold text-emerald-100/80">
-                {listing.vaccinated ? '✓ محصّن بشهادة رعاية' : 'معاينة قبل الشراء'} ·{' '}
-                {formatRelativeArabicTime(listing.publishedAt)}
-              </span>
-            </div>
-          }
-      />
-
+    <section className="min-h-screen bg-[var(--color-canvas)] transition-colors overflow-x-clip">
       <div
-        className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8 ${
-          !isOwner && listing.status === 'Published' ? 'pb-24 lg:pb-10' : 'pb-10'
+        className={`mx-auto max-w-[1280px] px-4 sm:px-6 lg:px-8 pt-5 sm:pt-6 ${
+          !isOwner && isPublished ? 'pb-24 lg:pb-16' : 'pb-16'
         }`}
       >
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
-        {/* Right Column in RTL: Gallery + Structured Specs + Negotiation Offers */}
-        <div className="lg:col-span-7 space-y-6 min-w-0">
-          {/* Media Gallery */}
-          <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-xs">
-            <div
-              className="relative aspect-[4/3] w-full bg-[var(--color-cream)] touch-pan-y select-none"
-              tabIndex={galleryItems.length > 1 ? 0 : undefined}
-              aria-label="معرض صور وفيديو الإعلان"
-              onTouchStart={(e) => {
-                if (galleryItems.length <= 1 || !e.touches[0]) return;
-                galleryTouchRef.current = {
-                  x: e.touches[0].clientX,
-                  y: e.touches[0].clientY,
-                };
-              }}
-              onTouchEnd={(e) => {
-                if (galleryItems.length <= 1 || !galleryTouchRef.current || !e.changedTouches[0]) {
-                  galleryTouchRef.current = null;
-                  return;
-                }
-                const dx = e.changedTouches[0].clientX - galleryTouchRef.current.x;
-                const dy = e.changedTouches[0].clientY - galleryTouchRef.current.y;
-                galleryTouchRef.current = null;
-                if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy)) return;
-                if (dx > 0) {
-                  setActiveMediaIdx((prev) => (prev + 1) % galleryItems.length);
-                } else {
-                  setActiveMediaIdx(
-                    (prev) => (prev - 1 + galleryItems.length) % galleryItems.length
-                  );
-                }
-              }}
-              onKeyDown={(e) => {
-                if (galleryItems.length <= 1) return;
-                if (e.key === 'ArrowLeft') {
-                  e.preventDefault();
-                  setActiveMediaIdx((prev) => (prev + 1) % galleryItems.length);
-                } else if (e.key === 'ArrowRight') {
-                  e.preventDefault();
-                  setActiveMediaIdx(
-                    (prev) => (prev - 1 + galleryItems.length) % galleryItems.length
-                  );
-                }
-              }}
-            >
-              {activeMedia?.kind === 'video' ? (
-                <video
-                  key={activeMedia.url}
-                  src={activeMedia.url}
-                  controls
-                  playsInline
-                  preload="metadata"
-                  className="w-full h-full object-contain bg-black"
-                />
-              ) : (
+        {/* Top Compact Breadcrumb + Back Navigation (Celebim Style) */}
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <nav className="flex min-w-0 items-center" aria-label="Breadcrumb">
+            <ol className="flex flex-wrap items-center gap-1.5 text-xs sm:text-[13px] font-medium text-[var(--color-muted)]">
+              {onGoHome && (
+                <li className="inline-flex items-center">
+                  <button
+                    type="button"
+                    onClick={onGoHome}
+                    className="inline-flex items-center gap-1 text-[var(--color-muted)] hover:text-[var(--color-green-ink)] transition-colors cursor-pointer"
+                  >
+                    <Home size={13} aria-hidden="true" />
+                    <span>الرئيسية</span>
+                  </button>
+                </li>
+              )}
+              <li className="inline-flex items-center gap-1.5">
+                {onGoHome && <ChevronLeft size={14} className="opacity-55 shrink-0" aria-hidden="true" />}
                 <button
                   type="button"
-                  onClick={() => setLightboxOpen(true)}
-                  aria-label="تكبير الصورة"
-                  className="w-full h-full block cursor-zoom-in focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--color-gold)]"
+                  onClick={onBack}
+                  className="text-[var(--color-muted)] hover:text-[var(--color-green-ink)] transition-colors cursor-pointer"
                 >
-                  <SafeImage
-                    src={activeMedia?.url}
-                    alt={listing.title}
-                    width={800}
-                    height={597}
-                    loading="eager"
-                    className="w-full h-full object-cover"
-                  />
+                  الإعلانات
                 </button>
+              </li>
+              {category && (
+                <li className="inline-flex items-center gap-1.5">
+                  <ChevronLeft size={14} className="opacity-55 shrink-0" aria-hidden="true" />
+                  <span className="text-[var(--color-ink)]/85">{category.name}</span>
+                </li>
               )}
-
-              {/* Counter & Media Type Indicator */}
-              <div className="absolute top-3 right-3 flex items-center gap-2 pointer-events-none">
-                {galleryItems.length > 1 && (
-                  <span className="px-2.5 py-1 rounded-md bg-black/65 backdrop-blur-xs text-white text-xs font-semibold tabular-nums">
-                    {safeMediaIdx + 1} / {galleryItems.length}
-                  </span>
-                )}
-                {activeMedia?.kind === 'video' && (
-                  <span className="px-2.5 py-1 rounded-md bg-[#0B3A29]/90 text-white text-xs font-semibold inline-flex items-center gap-1">
-                    <Play
-                      size={11}
-                      className="fill-[var(--color-gold)] text-[var(--color-gold)]"
-                      aria-hidden="true"
-                    />
-                    <span>فيديو المعاينة</span>
-                  </span>
-                )}
-              </div>
-
-              {activeMedia?.kind === 'image' && (
-                <button
-                  ref={zoomBtnRef}
-                  type="button"
-                  onClick={() => setLightboxOpen(true)}
-                  aria-label="عرض الصورة بالحجم الكامل"
-                  className="absolute top-3 left-3 w-11 h-11 rounded-lg bg-black/55 hover:bg-black/75 text-white flex items-center justify-center transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-[var(--color-gold)]"
-                >
-                  <Maximize2 size={16} aria-hidden="true" />
-                </button>
+              {breed && (
+                <li className="hidden sm:inline-flex items-center gap-1.5">
+                  <ChevronLeft size={14} className="opacity-55 shrink-0" aria-hidden="true" />
+                  <span className="text-[var(--color-ink)]/85">{breed.name}</span>
+                </li>
               )}
-
-              {galleryItems.length > 1 && (
-                <>
-                  <button
-                    type="button"
-                    aria-label="الوسيط السابق"
-                    onClick={() =>
-                      setActiveMediaIdx(
-                        (prev) => (prev - 1 + galleryItems.length) % galleryItems.length
-                      )
-                    }
-                    className="absolute right-3 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-11 sm:h-11 rounded-full sm:rounded-lg bg-black/55 hover:bg-black/75 text-white flex items-center justify-center transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-[var(--color-gold)]"
-                  >
-                    <ChevronRight size={20} aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="الوسيط التالي"
-                    onClick={() =>
-                      setActiveMediaIdx((prev) => (prev + 1) % galleryItems.length)
-                    }
-                    className="absolute left-3 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-11 sm:h-11 rounded-full sm:rounded-lg bg-black/55 hover:bg-black/75 text-white flex items-center justify-center transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-[var(--color-gold)]"
-                  >
-                    <ChevronLeft size={20} aria-hidden="true" />
-                  </button>
-
-                  {/* Mobile Pagination Dots */}
-                  <div
-                    aria-hidden="true"
-                    className="sm:hidden absolute bottom-2.5 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/45 backdrop-blur-xs pointer-events-none"
-                  >
-                    {galleryItems.map((item, idx) => (
-                      <span
-                        key={item.id}
-                        className={`h-1.5 rounded-full transition-all ${
-                          idx === safeMediaIdx ? 'w-4 bg-[#F4C569]' : 'w-1.5 bg-white/60'
-                        }`}
-                      />
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-
-            {galleryItems.length > 1 && (
-              <div className="p-3 flex items-center gap-2.5 overflow-x-auto border-t border-[var(--color-border)] bg-[var(--color-surface)]">
-                {galleryItems.map((item, idx) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setActiveMediaIdx(idx)}
-                    aria-current={idx === safeMediaIdx ? 'true' : undefined}
-                    aria-label={
-                      item.kind === 'video'
-                        ? 'تشغيل فيديو الإعلان'
-                        : `${listing.title} - صورة ${idx + 1}`
-                    }
-                    className={`w-20 h-16 rounded-lg overflow-hidden border-2 shrink-0 cursor-pointer relative transition-opacity ${
-                      idx === safeMediaIdx
-                        ? 'border-[var(--color-green-ink)] ring-2 ring-[var(--color-gold)]/50 opacity-100'
-                        : 'border-[var(--color-border)] opacity-75 hover:opacity-100'
-                    }`}
-                  >
-                    {item.kind === 'video' ? (
-                      <div className="w-full h-full bg-[#0B3A29] text-white flex flex-col items-center justify-center gap-0.5">
-                        <Play
-                          size={18}
-                          className="fill-[var(--color-gold)] text-[var(--color-gold)]"
-                          aria-hidden="true"
-                        />
-                        <span className="text-[10px] font-bold">فيديو</span>
-                      </div>
-                    ) : (
-                      <SafeImage
-                        src={item.url}
-                        alt={`${listing.title} - صورة ${idx + 1}`}
-                        width={800}
-                        height={597}
-                        className="w-full h-full object-cover"
-                      />
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Structured Specifications & Description */}
-          <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-5 sm:p-6">
-            <div className="flex flex-col items-start gap-2 pb-4 border-b border-[var(--color-border)] sm:flex-row sm:items-center sm:justify-between">
-              <h2 className="font-display text-lg font-bold text-[var(--color-ink)] text-balance">
-                المواصفات التفصيلية للعرض
-              </h2>
-              {listing.vaccinated && (
-                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--color-green-ink)] shrink-0 whitespace-nowrap">
-                  <ShieldCheck size={15} aria-hidden="true" />
-                  <span>محصّن بيطرياً</span>
+              <li aria-current="page" className="inline-flex items-center gap-1.5 min-w-0">
+                <ChevronLeft size={14} className="opacity-55 shrink-0" aria-hidden="true" />
+                <span className="truncate max-w-[200px] sm:max-w-[320px] font-bold text-[var(--color-green-ink)]">
+                  {listing.title}
                 </span>
-              )}
-            </div>
+              </li>
+            </ol>
+          </nav>
 
-            <dl className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-3.5">
-              <div className="p-3.5 rounded-xl bg-[var(--color-cream)]/65 border border-[var(--color-border)]/70">
-                <dt className="text-xs text-[var(--color-muted)]">التصنيف والسلالة</dt>
-                <dd className="mt-1 text-sm font-bold text-[var(--color-ink)]">
-                  {category?.name || 'أغنام'} — {breed?.name || 'غير محدد'}
-                  {subCategory ? ` (${subCategory.name})` : ''}
-                </dd>
-              </div>
-              <div className="p-3.5 rounded-xl bg-[var(--color-cream)]/65 border border-[var(--color-border)]/70">
-                <dt className="text-xs text-[var(--color-muted)]">العمر التقريبي</dt>
-                <dd className="mt-1 text-sm font-bold text-[var(--color-ink)] tabular-nums">
-                  {listing.ageMonths} أشهر
-                </dd>
-              </div>
-              <div className="p-3.5 rounded-xl bg-[var(--color-cream)]/65 border border-[var(--color-border)]/70">
-                <dt className="text-xs text-[var(--color-muted)]">الوزن التقريبي</dt>
-                <dd className="mt-1 text-sm font-bold text-[var(--color-ink)] tabular-nums">
-                  {listing.weightKg} كجم
-                </dd>
-              </div>
-              <div className="p-3.5 rounded-xl bg-[var(--color-cream)]/65 border border-[var(--color-border)]/70">
-                <dt className="text-xs text-[var(--color-muted)]">الجنس / الفئة</dt>
-                <dd className="mt-1 text-sm font-bold text-[var(--color-ink)]">{listing.sex}</dd>
-              </div>
-              <div className="p-3.5 rounded-xl bg-[var(--color-cream)]/65 border border-[var(--color-border)]/70">
-                <dt className="text-xs text-[var(--color-muted)]">العدد المتاح</dt>
-                <dd className="mt-1 text-sm font-bold text-[var(--color-ink)] tabular-nums">
-                  {listing.quantity} رأس
-                </dd>
-              </div>
-              <div className="p-3.5 rounded-xl bg-[var(--color-cream)]/65 border border-[var(--color-border)]/70">
-                <dt className="text-xs text-[var(--color-muted)]">التحصين البيطري</dt>
-                <dd className="mt-1 text-sm font-bold text-[var(--color-green-ink)]">
-                  {listing.vaccinated ? 'محصّن (دموي ومعوي)' : 'حسب المعاينة'}
-                </dd>
-              </div>
-            </dl>
-
-            <div className="mt-6 pt-5 border-t border-[var(--color-border)]">
-              <h3 className="font-display text-base font-bold text-[var(--color-ink)] mb-2.5">
-                وصف البائع وملاحظات العرض
-              </h3>
-              <p className="text-sm text-[var(--color-ink)]/90 leading-relaxed whitespace-pre-line break-words">
-                {listing.description}
-              </p>
-            </div>
-          </div>
-
-          {/* Price Offers / Negotiation Log */}
-          {allowsOffers && (
-            <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-5 sm:p-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[var(--color-border)]">
-                <div>
-                  <h2 className="font-display text-lg font-bold text-[var(--color-ink)]">
-                    سجل عروض الأسعار والتفاوض ({listingOffers.length})
-                  </h2>
-                  <p className="text-xs text-[var(--color-muted)] mt-0.5">
-                    عروض السوم المقدمة من المشترين على هذا الإعلان مع حالة رد المربي
-                  </p>
-                </div>
-
-                {!isOwner && (
-                  <button
-                    type="button"
-                    onClick={handleOpenOfferModal}
-                    className="min-h-[40px] px-4 py-2 rounded-lg bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
-                  >
-                    <BadgeDollarSign size={15} aria-hidden="true" />
-                    <span>تقديم عرض سعر</span>
-                  </button>
-                )}
-              </div>
-
-              {listingOffers.length === 0 ? (
-                <p className="mt-4 text-sm text-[var(--color-muted)]">
-                  لا توجد عروض أسعار مقدمة حتى الآن. كن أول من يقدم سومة للمربي.
-                </p>
-              ) : (
-                <div className="mt-3 divide-y divide-[var(--color-border)]">
-                  {listingOffers.map((offer) => (
-                    <div
-                      key={offer.id}
-                      className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                    >
-                      <div>
-                        <div className="flex items-center flex-wrap gap-2 text-xs text-[var(--color-muted)]">
-                          <span className="font-semibold text-[var(--color-ink)]">
-                            {offer.buyerName}
-                          </span>
-                          <span aria-hidden="true">·</span>
-                          <span className="tabular-nums">الكمية: {offer.quantity} رأس</span>
-                          <span aria-hidden="true">·</span>
-                          <span>{formatRelativeArabicTime(offer.createdAt)}</span>
-                        </div>
-                        <p className="font-display text-base font-extrabold text-[var(--color-green-ink)] tabular-nums mt-1">
-                          {formatPriceSar(offer.offeredPrice)} للرأس
-                          <span className="text-xs font-medium text-[var(--color-muted)] mr-2">
-                            (الإجمالي: {formatPriceSar(offer.offeredPrice * offer.quantity)})
-                          </span>
-                        </p>
-                        {offer.note && (
-                          <p className="text-xs text-[var(--color-muted)] mt-1">{offer.note}</p>
-                        )}
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-2 shrink-0">
-                        <span
-                          className={`text-xs font-semibold ${
-                            offer.status === 'accepted'
-                              ? 'text-[var(--color-green-ink)]'
-                              : offer.status === 'rejected'
-                              ? 'text-red-700 dark:text-red-400'
-                              : 'text-[var(--color-gold)]'
-                          }`}
-                        >
-                          {formatOfferStatus(offer.status)}
-                        </span>
-
-                        {canRespondOffers && offer.status === 'pending' && (
-                          <div className="flex items-center gap-1.5 mr-1">
-                            <button
-                              type="button"
-                              onClick={() => onRespondToOffer(offer.id, 'accepted')}
-                              className="min-h-[44px] sm:min-h-[36px] px-3 py-1.5 rounded-lg bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
-                            >
-                              <CheckCircle2 size={13} aria-hidden="true" />
-                              <span>قبول</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => onRespondToOffer(offer.id, 'rejected')}
-                              className="min-h-[44px] sm:min-h-[36px] px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-900/60 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
-                            >
-                              <XCircle size={13} aria-hidden="true" />
-                              <span>رفض</span>
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-xs font-bold text-[var(--color-ink)] hover:border-[var(--color-gold)] hover:text-[var(--color-green-ink)] transition-colors cursor-pointer shrink-0"
+          >
+            <ArrowRight size={14} aria-hidden="true" />
+            <span>العودة إلى الإعلانات</span>
+          </button>
         </div>
 
-        {/* Left Column in RTL: Sticky Purchase, Contact & Seller Module */}
-        <div className="lg:col-span-5 space-y-5 lg:sticky lg:top-20 min-w-0">
-          <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-5 sm:p-6 shadow-xs">
-            {/* Unboxed Metadata */}
-            <div className="flex items-center flex-wrap gap-x-2 gap-y-1 text-xs text-[var(--color-muted)] mb-2.5">
-              <span className="font-bold text-[var(--color-green-ink)]">
-                حالة الإعلان: {formatStatusLabel(listing.status)}
-              </span>
-              <span aria-hidden="true">·</span>
-              <span className="inline-flex items-center gap-1">
-                <MapPin size={12} aria-hidden="true" />
-                <span>
-                  {region?.name} — {listing.city}
-                </span>
-              </span>
-              <span aria-hidden="true">·</span>
-              <span>{formatRelativeArabicTime(listing.publishedAt)}</span>
-              {likesEnabled && (
-                <>
-                  <span aria-hidden="true">·</span>
-                  <span className="tabular-nums font-medium text-[var(--color-ink)]">
-                    {likesCount} إعجاب
-                  </span>
-                </>
-              )}
+        {/* Non-published Status Notice */}
+        {!isPublished && (
+          <div className="mb-5 flex items-start gap-3 rounded-2xl border border-[var(--color-gold)]/55 bg-[var(--color-gold-soft)]/70 dark:bg-[var(--color-surface-warm)] p-4 text-[var(--color-ink)]">
+            <Info className="mt-0.5 h-5 w-5 shrink-0 text-[var(--color-gold)]" aria-hidden="true" />
+            <div>
+              <h2 className="font-display text-sm font-extrabold">
+                حالة هذا الإعلان: {formatStatusLabel(listing.status)}
+              </h2>
+              <p className="mt-1 text-xs leading-relaxed text-[var(--color-muted)]">
+                {listing.status === 'Sold'
+                  ? 'تم إتمام بيع هذا العرض، لذلك تم إيقاف أزرار التواصل المباشر وتقديم العروض.'
+                  : 'أزرار التواصل المباشر متاحة فقط للإعلانات المنشورة والنشطة في السوق.'}
+              </p>
             </div>
+          </div>
+        )}
 
-            <h1 className="font-display text-xl sm:text-2xl font-extrabold text-[var(--color-ink)] leading-snug text-balance">
-              {listing.title}
-            </h1>
+        {/* Main 2-Column Layout (1fr Main + 340px Sticky Sidebar — Celebim 1:1) */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-6 lg:gap-7 items-start">
+          {/* MAIN COLUMN (Right in RTL) */}
+          <div className="flex flex-col min-w-0">
+            {/* 1. Title & Meta Card */}
+            <div className="bg-[var(--color-surface)] border-[1.5px] border-[var(--color-border)] rounded-2xl p-5 sm:p-6 mb-5 shadow-xs">
+              <div className="flex gap-1.5 flex-wrap mb-3">
+                {category && (
+                  <span className="rounded-md border border-[var(--color-gold)]/45 bg-[var(--color-gold-soft)]/65 dark:bg-[var(--color-surface-warm)] px-2.5 py-1 text-[11px] font-bold tracking-wide text-[var(--color-green-ink)]">
+                    {category.name}
+                  </span>
+                )}
+                {breed && (
+                  <span className="rounded-md border border-[var(--color-border)] bg-[var(--color-cream)]/60 px-2.5 py-1 text-[11px] font-bold tracking-wide text-[var(--color-ink)]">
+                    {breed.name}
+                  </span>
+                )}
+                {subCategory && (
+                  <span className="rounded-md border border-[var(--color-border)] bg-[var(--color-cream)]/40 px-2.5 py-1 text-[11px] font-bold tracking-wide text-[var(--color-muted)]">
+                    {subCategory.name}
+                  </span>
+                )}
+                {listing.isFeatured && isPublished && (
+                  <span className="inline-flex items-center gap-1 rounded-md border border-[var(--color-gold)] bg-[var(--color-gold)] px-2.5 py-1 text-[11px] font-extrabold tracking-wide text-[#10241B]">
+                    <Zap size={12} className="fill-current" aria-hidden="true" />
+                    <span>مميز</span>
+                  </span>
+                )}
+                {isNewListing && !listing.isFeatured && isPublished && (
+                  <span className="rounded-md border border-[var(--color-green)] bg-[var(--color-green)] px-2.5 py-1 text-[11px] font-bold tracking-wide text-white">
+                    إعلان جديد
+                  </span>
+                )}
+                {!isPublished && (
+                  <span className="rounded-md border border-[var(--color-border)] bg-[var(--color-ink)] px-2.5 py-1 text-[11px] font-bold text-[var(--color-surface)]">
+                    {formatStatusLabel(listing.status)}
+                  </span>
+                )}
+              </div>
 
-            {/* Structured Price & Herd Value Breakdown */}
-            <div className="mt-4 p-4 rounded-xl bg-[var(--color-cream)]/75 border border-[var(--color-border)] space-y-3">
-              <div className="flex flex-wrap items-end justify-between gap-3">
-                <div>
-                  <p className="text-xs text-[var(--color-muted)]">السعر المطلوب للرأس</p>
-                  <p className="font-display text-2xl sm:text-3xl font-extrabold text-[var(--color-green-ink)] tabular-nums mt-0.5">
-                    {formatPriceSar(listing.priceAmount)}
-                    <span className="text-xs font-semibold text-[var(--color-muted)] mr-1.5">
-                      / للرأس
-                    </span>
-                  </p>
+              <div className="flex items-center gap-3 flex-wrap mb-3">
+                <h1 className="font-display text-xl sm:text-2xl font-black text-[var(--color-ink)] leading-tight text-balance">
+                  {listing.title}
+                </h1>
+                {listing.vaccinated && (
+                  <span className="bg-[#DCFCE7] text-[#15803D] dark:bg-emerald-950/70 dark:text-emerald-300 border border-[#BBF7D0] dark:border-emerald-800/70 inline-flex items-center gap-1.5 text-[12px] font-bold px-3 py-1 rounded-lg shrink-0">
+                    <ShieldCheck size={15} aria-hidden="true" />
+                    <span>محصّن بيطرياً</span>
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-x-4 gap-y-2 flex-wrap text-xs text-[var(--color-muted)]">
+                <div className="flex items-center gap-1.5">
+                  <MapPin size={13} className="text-[var(--color-green-ink)] shrink-0" aria-hidden="true" />
+                  <span>
+                    <strong className="text-[var(--color-ink)]">{region?.name || 'المملكة'}</strong>
+                    {listing.city ? `، ${listing.city}` : ''}
+                  </span>
                 </div>
-
-                {listing.expectedPrice && listing.expectedPrice > 0 && (
-                  <div className="text-left">
-                    <p className="text-xs text-[var(--color-muted)]">السعر المتوقع للتفاوض للرأس</p>
-                    <p className="font-display text-lg font-bold text-[var(--color-ink)] tabular-nums mt-0.5">
-                      {formatPriceSar(listing.expectedPrice)}
-                    </p>
+                <div className="flex items-center gap-1.5">
+                  <Clock size={13} className="shrink-0" aria-hidden="true" />
+                  <span>{formatRelativeArabicTime(listing.publishedAt)}</span>
+                </div>
+                {likesEnabled && (
+                  <div className="flex items-center gap-1.5 tabular-nums">
+                    <Heart size={13} className="shrink-0" aria-hidden="true" />
+                    <span>
+                      <strong className="text-[var(--color-ink)]">{likesCount}</strong> إعجاب
+                    </span>
                   </div>
                 )}
-              </div>
-
-              <div className="pt-3 border-t border-[var(--color-border)]/80 flex flex-wrap items-center justify-between gap-2 text-xs">
-                <span className="font-semibold text-[var(--color-ink)] tabular-nums">
-                  الكمية المتاحة: {listing.quantity} رأس
-                </span>
-                {totalHerdValue !== null && (
-                  <span className="font-bold text-[var(--color-green-ink)] tabular-nums">
-                    إجمالي قيمة القطيع: {formatPriceSar(totalHerdValue)}
+                <div className="flex items-center gap-1.5 tabular-nums">
+                  <Calendar size={13} className="shrink-0" aria-hidden="true" />
+                  <span>
+                    رقم الإعلان:{' '}
+                    <strong className="text-[var(--color-ink)]" dir="ltr">
+                      {listing.id.slice(0, 10)}
+                    </strong>
                   </span>
-                )}
+                </div>
               </div>
+            </div>
 
-              <p className="text-xs font-medium text-[var(--color-muted)]">
-                {allowsOffers
-                  ? 'ميزة تقديم عرض سعر مفعّلة · يقبل السوم والتفاوض'
-                  : listing.isNegotiable
-                  ? 'السعر قابل للتفاوض المباشر مع البائع'
-                  : 'سعر نهائي محدد من البائع'}
-              </p>
+            {/* 2. Highlighted Price & Live Weight Banner Card */}
+            <div className="mb-5 rounded-2xl border-[1.5px] border-[var(--color-gold)]/55 bg-[var(--color-gold-soft)]/50 dark:bg-[var(--color-surface-warm)] p-5 sm:p-6">
+              <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center sm:gap-5">
+                <div className="flex-1 min-w-0">
+                  <div className="mb-1.5 text-[11px] font-bold tracking-[0.04em] text-[var(--color-muted)]">
+                    السعر المطلوب للرأس
+                  </div>
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <span className="font-display text-[32px] sm:text-[40px] font-black leading-none tracking-tight text-[var(--color-green-ink)] tabular-nums">
+                      {formatPriceSar(listing.priceAmount)}
+                    </span>
+                    <span className="text-sm sm:text-base font-bold text-[var(--color-muted)]">
+                      / للرأس
+                    </span>
+                  </div>
+
+                  <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+                    {totalHerdValue !== null && (
+                      <span className="font-bold text-[var(--color-green-ink)] tabular-nums">
+                        إجمالي قيمة القطيع ({listing.quantity} رأس): {formatPriceSar(totalHerdValue)}
+                      </span>
+                    )}
+                    {listing.expectedPrice && listing.expectedPrice > 0 && (
+                      <span className="font-semibold text-[var(--color-ink)] tabular-nums">
+                        سعر التفاوض المتوقع: {formatPriceSar(listing.expectedPrice)}
+                      </span>
+                    )}
+                    <span className="font-medium text-[var(--color-muted)]">
+                      {allowsOffers
+                        ? 'ميزة السوم مفعّلة'
+                        : listing.isNegotiable
+                        ? 'قابل للتفاوض المباشر'
+                        : 'سعر نهائي'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="min-w-[165px] rounded-xl border border-[var(--color-gold)]/45 bg-[var(--color-surface)] p-3.5 text-center shadow-xs shrink-0">
+                  <div className="mb-1 text-[10px] font-semibold tracking-[0.04em] text-[var(--color-muted)]">
+                    الوزن التقديري للرأس
+                  </div>
+                  <div className="font-display text-[22px] font-black leading-none text-[var(--color-green-ink)] tabular-nums">
+                    {listing.weightKg > 0 ? `${listing.weightKg} كجم` : 'حسب المعاينة'}
+                  </div>
+                  <div className="mt-1.5 text-[11px] font-bold text-[var(--color-muted)] tabular-nums">
+                    الكمية المتاحة: {listing.quantity} رأس
+                  </div>
+                </div>
+              </div>
 
               {priceReading && (
-                <div className="pt-3 border-t border-[var(--color-border)]/80">
-                  <p className="text-sm leading-relaxed text-[var(--color-ink)]">{priceReading.sentence}</p>
+                <div className="mt-4 pt-3.5 border-t border-[var(--color-gold)]/30">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs leading-relaxed text-[var(--color-ink)]">
+                      {priceReading.sentence}
+                    </p>
+                    {onOpenPriceIndex && (
+                      <button
+                        type="button"
+                        onClick={onOpenPriceIndex}
+                        className="text-xs font-bold text-[var(--color-green-ink)] hover:underline cursor-pointer shrink-0"
+                      >
+                        دليل الأسعار الاسترشادية
+                      </button>
+                    )}
+                  </div>
                   <div
-                    className="relative mt-3 h-1.5 rounded-full bg-[var(--color-border)]"
+                    className="relative mt-2.5 h-1.5 rounded-full bg-[var(--color-border)]"
                     role="img"
                     aria-label={priceReading.sentence}
                   >
                     <span
-                      className="absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full bg-[var(--color-green-ink)] border-2 border-[var(--color-canvas)]"
-                      style={{ insetInlineStart: `clamp(0px, calc(${priceReading.marker}% - 7px), calc(100% - 14px))` }}
+                      className="absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full bg-[var(--color-green-ink)] border-2 border-[var(--color-surface)] shadow-xs"
+                      style={{
+                        insetInlineStart: `clamp(0px, calc(${priceReading.marker}% - 7px), calc(100% - 14px))`,
+                      }}
                     />
                   </div>
-                  <div className="mt-2 flex items-center justify-between gap-3 text-xs tabular-nums text-[var(--color-muted)]">
+                  <div className="mt-1.5 flex items-center justify-between gap-3 text-[11px] tabular-nums text-[var(--color-muted)]">
                     <span>{formatPriceSar(priceReading.min)}</span>
                     <span>المتوسط {formatPriceSar(priceReading.avg)}</span>
                     <span>{formatPriceSar(priceReading.max)}</span>
                   </div>
-                  {onOpenPriceIndex && (
-                    <button
-                      type="button"
-                      onClick={onOpenPriceIndex}
-                      className="mt-2 text-xs font-semibold text-[var(--color-green-ink)] hover:underline cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-gold)]"
-                    >
-                      دليل الأسعار الاسترشادية
-                    </button>
-                  )}
                 </div>
               )}
             </div>
 
-            {/* Owner Management Shortcuts (Edit & Mark Sold) */}
-            {isOwner && (
-              <div className="mt-5 p-4 rounded-xl bg-[var(--color-cream)] border border-[var(--color-border)] space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="font-display text-sm font-bold text-[var(--color-ink)]">
-                    إدارة إعلانك
-                  </p>
-                  <span className="text-[11px] font-semibold text-[var(--color-green-ink)]">
-                    {formatStatusLabel(listing.status)}
-                  </span>
-                </div>
-                {listing.rejectionReason && (
-                  <p className="text-xs text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 rounded-lg p-2.5">
-                    سبب الرفض: {listing.rejectionReason}
-                  </p>
-                )}
-                <div className="flex flex-wrap gap-2.5">
-                  {onEditListing && (
-                    <button
-                      type="button"
-                      onClick={() => onEditListing(listing)}
-                      className="flex-1 min-w-[130px] min-h-[42px] px-4 rounded-lg bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Pencil size={14} aria-hidden="true" />
-                      <span>تعديل الإعلان</span>
-                    </button>
-                  )}
-                  {onMarkSold && listing.status === 'Published' && (
-                    <button
-                      type="button"
-                      disabled={markingSold}
-                      onClick={handleConfirmMarkSold}
-                      className="flex-1 min-w-[130px] min-h-[42px] px-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-cream-hover)] text-[var(--color-ink)] text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
-                    >
-                      <CheckCircle2 size={14} aria-hidden="true" />
-                      <span>{markingSold ? 'جاري التحديث...' : 'تحديد كمباع'}</span>
-                    </button>
-                  )}
-                </div>
-                {!listing.isFeatured &&
-                  (listing.status === 'Published' || listing.status === 'Pending') && (
-                    <div className="pt-2 border-t border-[var(--color-border)]/70 flex flex-wrap items-center justify-between gap-2 text-xs">
-                      {listing.featuredRequested ? (
-                        <span className="text-[var(--color-green-ink)] font-semibold inline-flex items-center gap-1.5">
-                          <Sparkles size={14} className="text-[var(--color-gold)]" aria-hidden="true" />
-                          <span>طلب تمييز الإعلان مسجل — أكمل الحوالة من لوحة حسابي</span>
-                        </span>
-                      ) : (
-                        <>
-                          <span className="text-[var(--color-muted)]">
-                            تمييز وتثبيت الإعلان ({formatPriceSar(commissionSettings?.featuredWeeklyPriceSar ?? 35)} / أسبوع):
-                          </span>
-                          <button
-                            type="button"
-                            disabled={requestingFeature}
-                            onClick={handleRequestFeatured}
-                            className="min-h-[36px] px-3 rounded-lg border border-[var(--color-gold)]/70 bg-[var(--color-surface)] hover:bg-[var(--color-gold-soft)]/35 text-xs font-bold text-[var(--color-ink)] inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
-                          >
-                            <Sparkles size={13} className="text-[var(--color-gold)]" aria-hidden="true" />
-                            <span>{requestingFeature ? 'جاري الطلب...' : 'طلب تمييز الإعلان'}</span>
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  )}
-              </div>
-            )}
-
-            {/* Primary Negotiation, Contact & Engagement Buttons */}
-            <div className="mt-5 space-y-2.5">
-              {allowsOffers && !isOwner && (
-                <button
-                  type="button"
-                  onClick={handleOpenOfferModal}
-                  className="w-full h-11 px-4 rounded-lg bg-[var(--color-gold)] hover:bg-[var(--color-gold-hover)] text-[#14261D] text-sm font-bold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer"
-                >
-                  <BadgeDollarSign size={17} aria-hidden="true" />
-                  <span>تقديم عرض سعر للمربي (سوم)</span>
-                </button>
-              )}
-              {offerSuccess && (
-                <p className="text-xs font-medium text-[var(--color-green-ink)] bg-[var(--color-cream)] border border-[var(--color-border)] rounded-lg px-3 py-2">
-                  تم تسجيل عرض سعرك وإشعار المربي به، ويمكنك متابعة الرد في سجل العروض أو من لوحة حسابي.
-                </p>
-              )}
-
-              {/* Visitor Login/Register CTA for contacting seller */}
-              {!currentUser && (
-                <div className="p-4 rounded-xl bg-[var(--color-cream)] border border-[var(--color-border)] space-y-2.5">
-                  <p className="text-xs font-bold text-[var(--color-ink)]">
-                    تواصل مع البائع وأظهر رقم الجوال أو الواتساب
-                  </p>
-                  <p className="text-[11px] text-[var(--color-muted)] leading-relaxed">
-                    للحفاظ على خصوصية المربين، تتاح أرقام الاتصال والمراسلة المباشرة للأعضاء المسجلين فقط.
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => onRequireAuth?.('login')}
-                      className="flex-1 min-w-[140px] min-h-[42px] px-4 rounded-lg bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <LogIn size={14} aria-hidden="true" />
-                      <span>تسجيل الدخول للتواصل</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onRequireAuth?.('register')}
-                      className="min-h-[42px] px-3.5 rounded-lg border border-[var(--color-green-ink)] text-[var(--color-green-ink)] hover:bg-[var(--color-surface)] text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <UserPlus size={14} aria-hidden="true" />
-                      <span>حساب جديد</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Authenticated Buyer Telephone & WhatsApp Actions (on-demand via /contact) */}
-              {currentUser && !isOwner && (
-                <div className="space-y-2">
-                  {listing.status !== 'Published' ? (
-                    <p className="text-xs text-[var(--color-muted)] bg-[var(--color-cream)]/60 border border-[var(--color-border)] rounded-lg px-3 py-2.5">
-                      بيانات الاتصال المباشر متاحة فقط للإعلانات المنشورة.
-                    </p>
-                  ) : seller?.contactAvailable === false ? (
-                    <p className="text-xs text-[var(--color-muted)] bg-[var(--color-cream)]/60 border border-[var(--color-border)] rounded-lg px-3 py-2.5">
-                      لا تتوفر بيانات التواصل المباشر لهذا الحساب حالياً، يمكنك المتابعة عبر رسائل المنصة.
-                    </p>
-                  ) : !revealedContact ? (
-                    <div className="space-y-2">
-                      <button
-                        type="button"
-                        disabled={revealingContact}
-                        onClick={handleRevealContact}
-                        className="w-full h-11 px-4 rounded-lg bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-60"
-                      >
-                        <Phone size={16} aria-hidden="true" />
-                        <span>{revealingContact ? 'جاري التحقق وإظهار الرقم...' : 'إظهار رقم البائع والتواصل'}</span>
-                      </button>
-                      {contactError && (
-                        <p
-                          role="alert"
-                          className="p-2.5 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-xs text-red-700 dark:text-red-300"
-                        >
-                          {contactError}
-                        </p>
-                      )}
-                    </div>
-                  ) : contactLinks.phoneDisplay || contactLinks.whatsappHref ? (
-                    <div className="flex flex-wrap gap-2">
-                      {contactLinks.phoneDisplay && (
-                        <button
-                          type="button"
-                          onClick={() => setShowPhone((p) => !p)}
-                          aria-expanded={showPhone}
-                          className="flex-1 min-w-[145px] h-11 px-4 rounded-lg bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer"
-                        >
-                          <Phone size={16} aria-hidden="true" />
-                          <span className="tabular-nums" dir={showPhone ? 'ltr' : 'rtl'}>
-                            {showPhone ? contactLinks.phoneDisplay : 'إظهار رقم البائع'}
-                          </span>
-                        </button>
-                      )}
-
-                      {contactLinks.telHref && (
-                        <a
-                          href={contactLinks.telHref}
-                          aria-label={`اتصال هاتفي بالبائع ${seller?.displayName || ''}`}
-                          className="h-11 px-4 rounded-lg border border-[var(--color-green-ink)] bg-[var(--color-surface)] hover:bg-[var(--color-cream)] text-[var(--color-green-ink)] text-sm font-semibold inline-flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
-                        >
-                          <Phone size={15} aria-hidden="true" />
-                          <span>اتصال</span>
-                        </a>
-                      )}
-
-                      {contactLinks.whatsappHref && (
-                        <a
-                          href={contactLinks.whatsappHref}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          aria-label={`مراسلة البائع ${seller?.displayName || ''} عبر واتساب`}
-                          className="h-11 px-4 rounded-lg border border-[var(--color-green-ink)] bg-[var(--color-cream)] hover:bg-[var(--color-cream-hover)] text-[var(--color-green-ink)] text-sm font-semibold inline-flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
-                        >
-                          <svg
-                            viewBox="0 0 24 24"
-                            className="w-4 h-4 fill-current shrink-0"
-                            aria-hidden="true"
-                          >
-                            <path d="M12.04 2a9.93 9.93 0 0 0-8.5 15.05L2 22l5.1-1.34A9.93 9.93 0 1 0 12.04 2Zm5.78 14.08c-.24.68-1.4 1.3-1.94 1.38-.5.07-1.13.1-1.82-.12-.42-.14-.96-.32-1.65-.62-2.9-1.25-4.79-4.18-4.93-4.37-.14-.2-1.18-1.57-1.18-3 0-1.42.74-2.12 1-2.41.27-.29.58-.36.77-.36h.56c.18 0 .42-.07.66.5.24.58.82 2 .9 2.14.07.14.12.31.02.5-.1.2-.15.32-.29.49-.15.17-.3.38-.44.51-.14.15-.3.3-.13.59.17.29.75 1.24 1.61 2.01 1.11.99 2.04 1.3 2.33 1.44.29.15.46.12.63-.07.17-.2.72-.84.91-1.13.2-.29.39-.24.65-.15.27.1 1.68.8 1.97.94.29.15.48.22.55.34.07.12.07.7-.17 1.38Z" />
-                          </svg>
-                          <span>واتساب البائع</span>
-                        </a>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-[var(--color-muted)] bg-[var(--color-cream)]/60 border border-[var(--color-border)] rounded-lg px-3 py-2.5">
-                      يمكنك التواصل المباشر مع البائع عبر رسائل المنصة أدناه.
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {/* Engagement Row: Separate Like, Favorite & Compare */}
-              <div className="grid grid-cols-3 gap-2 pt-1">
-                <button
-                  type="button"
-                  disabled={!likesEnabled || !onToggleLike}
-                  aria-pressed={isLiked}
-                  title={
-                    !likesEnabled
-                      ? 'الإعجاب متاح فقط بعد نشر الإعلان'
-                      : isLiked
-                      ? 'إلغاء الإعجاب'
-                      : 'الإعجاب بالإعلان'
+            {/* 3. Media Gallery Card (16:10 Blurred-Backdrop Viewer + Floating Icons + Thumbnail Strip + Notice) */}
+            <div className="w-full bg-[var(--color-surface)] border-[1.5px] border-[var(--color-border)] rounded-2xl overflow-hidden mb-5 shadow-xs">
+              <div
+                className="relative aspect-[16/10] w-full bg-[var(--color-cream)]/60 overflow-hidden group touch-pan-y select-none"
+                tabIndex={galleryItems.length > 1 ? 0 : undefined}
+                aria-label="معرض صور وفيديو الإعلان"
+                onTouchStart={(e) => {
+                  if (galleryItems.length <= 1 || !e.touches[0]) return;
+                  galleryTouchRef.current = {
+                    x: e.touches[0].clientX,
+                    y: e.touches[0].clientY,
+                  };
+                }}
+                onTouchEnd={(e) => {
+                  if (galleryItems.length <= 1 || !galleryTouchRef.current || !e.changedTouches[0]) {
+                    galleryTouchRef.current = null;
+                    return;
                   }
-                  onClick={() => onToggleLike?.(listing.id)}
-                  className={`h-11 px-2.5 rounded-lg border text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-1.5 transition-all duration-150 cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
-                    isLiked
-                      ? 'bg-[var(--color-cream)] border-[var(--color-green-ink)] text-[var(--color-green-ink)]'
-                      : 'bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-ink)] hover:bg-[var(--color-cream)]'
-                  }`}
-                >
-                  <ThumbsUp
-                    size={15}
-                    aria-hidden="true"
-                    className={isLiked ? 'fill-[var(--color-gold)] text-[var(--color-green-ink)]' : ''}
+                  const dx = e.changedTouches[0].clientX - galleryTouchRef.current.x;
+                  const dy = e.changedTouches[0].clientY - galleryTouchRef.current.y;
+                  galleryTouchRef.current = null;
+                  if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy)) return;
+                  if (dx > 0) {
+                    setActiveMediaIdx((prev) => (prev + 1) % galleryItems.length);
+                  } else {
+                    setActiveMediaIdx(
+                      (prev) => (prev - 1 + galleryItems.length) % galleryItems.length
+                    );
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (galleryItems.length <= 1) return;
+                  if (e.key === 'ArrowLeft') {
+                    e.preventDefault();
+                    setActiveMediaIdx((prev) => (prev + 1) % galleryItems.length);
+                  } else if (e.key === 'ArrowRight') {
+                    e.preventDefault();
+                    setActiveMediaIdx(
+                      (prev) => (prev - 1 + galleryItems.length) % galleryItems.length
+                    );
+                  }
+                }}
+              >
+                {activeMedia?.kind === 'video' ? (
+                  <video
+                    key={activeMedia.url}
+                    src={activeMedia.url}
+                    controls
+                    playsInline
+                    preload="metadata"
+                    className="w-full h-full object-contain bg-black"
                   />
-                  <span>{isLiked ? 'أعجبني' : 'إعجاب'}</span>
-                  <span className="tabular-nums font-bold">({likesCount})</span>
-                </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setLightboxOpen(true)}
+                    aria-label="تكبير الصورة"
+                    className="relative w-full h-full block cursor-zoom-in focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--color-gold)]"
+                  >
+                    {activeMedia?.url && (
+                      <img
+                        src={activeMedia.url}
+                        alt=""
+                        aria-hidden="true"
+                        className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl opacity-30 pointer-events-none"
+                      />
+                    )}
+                    <SafeImage
+                      src={activeMedia?.url}
+                      alt={`${listing.title} - صورة ${safeMediaIdx + 1}`}
+                      width={960}
+                      height={600}
+                      loading="eager"
+                      className="relative z-10 w-full h-full object-contain p-1.5 sm:p-2 transition-transform duration-300 group-hover:scale-[1.02]"
+                    />
+                  </button>
+                )}
 
-                <button
-                  type="button"
-                  aria-pressed={isFavorite}
-                  onClick={() => onToggleFavorite(listing.id)}
-                  className={`h-11 px-2.5 rounded-lg border text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
-                    isFavorite
-                      ? 'bg-[var(--color-cream)] border-[var(--color-gold)] text-[var(--color-green-ink)]'
-                      : 'bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-ink)] hover:bg-[var(--color-cream)]'
-                  }`}
-                >
-                  <Heart size={15} fill={isFavorite ? 'var(--color-gold)' : 'none'} aria-hidden="true" />
-                  <span>{isFavorite ? 'في المفضلة' : 'حفظ'}</span>
-                </button>
+                {/* Floating Action Stack Top-Left (End in RTL) */}
+                <div className="absolute top-3.5 left-3.5 z-20 flex flex-col gap-2 items-center">
+                  <button
+                    type="button"
+                    onClick={() => onToggleFavorite(listing.id)}
+                    aria-pressed={isFavorite}
+                    aria-label={isFavorite ? 'إزالة من المفضلة' : 'إضافة إلى المفضلة'}
+                    className={`w-10 h-10 rounded-full shadow-sm border flex items-center justify-center transition-all hover:scale-105 cursor-pointer ${
+                      isFavorite
+                        ? 'bg-red-50 border-red-200 text-red-500'
+                        : 'bg-white/92 dark:bg-[var(--color-surface)]/92 border-[var(--color-border)] text-[var(--color-ink)] hover:text-red-500'
+                    }`}
+                  >
+                    <Heart size={17} fill={isFavorite ? 'currentColor' : 'none'} aria-hidden="true" />
+                  </button>
 
-                <button
-                  type="button"
-                  aria-pressed={isInCompare}
-                  onClick={() => onToggleCompare(listing.id)}
-                  className={`h-11 px-2.5 rounded-lg border text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
-                    isInCompare
-                      ? 'bg-[var(--color-cream)] border-[var(--color-green-ink)] text-[var(--color-green-ink)]'
-                      : 'bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-ink)] hover:bg-[var(--color-cream)]'
-                  }`}
-                >
-                  <Scale size={15} aria-hidden="true" />
-                  <span>{isInCompare ? 'بالمقارنة' : 'مقارنة'}</span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={handleCopyShareLink}
+                    aria-label="نسخ رابط الإعلان"
+                    className="w-10 h-10 rounded-full bg-white/92 dark:bg-[var(--color-surface)]/92 border border-[var(--color-border)] text-[var(--color-ink)] hover:border-[var(--color-gold)] hover:text-[var(--color-green-ink)] shadow-sm flex items-center justify-center transition-all hover:scale-105 cursor-pointer"
+                  >
+                    {copiedLink ? (
+                      <Check size={16} className="text-[var(--color-green-ink)]" aria-hidden="true" />
+                    ) : (
+                      <Share2 size={16} aria-hidden="true" />
+                    )}
+                  </button>
+
+                  {activeMedia?.kind === 'image' && (
+                    <button
+                      ref={zoomBtnRef}
+                      type="button"
+                      onClick={() => setLightboxOpen(true)}
+                      aria-label="عرض الصورة بالحجم الكامل"
+                      className="w-10 h-10 rounded-full bg-white/92 dark:bg-[var(--color-surface)]/92 border border-[var(--color-border)] text-[var(--color-ink)] hover:border-[var(--color-gold)] hover:text-[var(--color-green-ink)] shadow-sm flex items-center justify-center transition-all hover:scale-105 cursor-pointer"
+                    >
+                      <Maximize2 size={15} aria-hidden="true" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Counter & Media Type Top-Right (Start in RTL) */}
+                <div className="absolute top-3.5 right-3.5 z-20 flex items-center gap-2 pointer-events-none">
+                  {galleryItems.length > 1 && (
+                    <span className="px-2.5 py-1 rounded-full bg-black/65 backdrop-blur-xs text-white text-xs font-bold tabular-nums">
+                      {safeMediaIdx + 1} / {galleryItems.length}
+                    </span>
+                  )}
+                  {activeMedia?.kind === 'video' && (
+                    <span className="px-2.5 py-1 rounded-full bg-[var(--color-green)]/90 text-white text-xs font-bold inline-flex items-center gap-1">
+                      <Play
+                        size={11}
+                        className="fill-[var(--color-gold)] text-[var(--color-gold)]"
+                        aria-hidden="true"
+                      />
+                      <span>فيديو المعاينة</span>
+                    </span>
+                  )}
+                </div>
+
+                {/* Prev / Next Navigation */}
+                {galleryItems.length > 1 && (
+                  <>
+                    <button
+                      type="button"
+                      aria-label="الوسيط السابق"
+                      onClick={() =>
+                        setActiveMediaIdx(
+                          (prev) => (prev - 1 + galleryItems.length) % galleryItems.length
+                        )
+                      }
+                      className="absolute right-3 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-black/55 hover:bg-black/75 text-white flex items-center justify-center transition-colors cursor-pointer"
+                    >
+                      <ChevronRight size={20} aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="الوسيط التالي"
+                      onClick={() =>
+                        setActiveMediaIdx((prev) => (prev + 1) % galleryItems.length)
+                      }
+                      className="absolute left-3 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-black/55 hover:bg-black/75 text-white flex items-center justify-center transition-colors cursor-pointer"
+                    >
+                      <ChevronLeft size={20} aria-hidden="true" />
+                    </button>
+
+                    {/* Mobile Pagination Dots */}
+                    <div
+                      aria-hidden="true"
+                      className="sm:hidden absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/45 backdrop-blur-xs pointer-events-none"
+                    >
+                      {galleryItems.map((item, idx) => (
+                        <span
+                          key={item.id}
+                          className={`h-1.5 rounded-full transition-all ${
+                            idx === safeMediaIdx ? 'w-4 bg-[#F4C569]' : 'w-1.5 bg-white/60'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
 
-              {compareListings.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    compareSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                  }
-                  className="text-xs font-semibold text-[var(--color-green-ink)] hover:underline inline-flex items-center gap-1.5 cursor-pointer pt-1"
-                >
-                  <Scale size={13} aria-hidden="true" />
-                  <span className="tabular-nums">
-                    عرض جدول مقارنة المواشي ({compareListings.length} / 4)
-                  </span>
-                </button>
+              {/* Thumbnail Strip */}
+              {galleryItems.length > 1 && (
+                <div className="flex gap-2 p-3 bg-[var(--color-cream)]/60 border-t border-[var(--color-border)] overflow-x-auto">
+                  {galleryItems.map((item, idx) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setActiveMediaIdx(idx)}
+                      aria-current={idx === safeMediaIdx ? 'true' : undefined}
+                      aria-label={
+                        item.kind === 'video'
+                          ? 'تشغيل فيديو الإعلان'
+                          : `${listing.title} - صورة ${idx + 1}`
+                      }
+                      className={`w-[72px] h-[54px] rounded-lg overflow-hidden border-2 shrink-0 cursor-pointer relative transition-all ${
+                        idx === safeMediaIdx
+                          ? 'border-[var(--color-gold)] ring-2 ring-[var(--color-gold)]/35 opacity-100'
+                          : 'border-[var(--color-border)] opacity-75 hover:opacity-100'
+                      }`}
+                    >
+                      {item.kind === 'video' ? (
+                        <div className="w-full h-full bg-[var(--color-green)] text-white flex flex-col items-center justify-center gap-0.5">
+                          <Play
+                            size={16}
+                            className="fill-[var(--color-gold)] text-[var(--color-gold)]"
+                            aria-hidden="true"
+                          />
+                          <span className="text-[10px] font-bold">فيديو</span>
+                        </div>
+                      ) : (
+                        <SafeImage
+                          src={item.url}
+                          alt={`${listing.title} - مصغرة ${idx + 1}`}
+                          width={160}
+                          height={120}
+                          className="w-full h-full object-cover"
+                        />
+                      )}
+                    </button>
+                  ))}
+                </div>
               )}
+
+              {/* Bottom Media Notice Strip */}
+              <div className="p-3 bg-[var(--color-gold-soft)]/55 dark:bg-[var(--color-cream)] border-t border-[var(--color-gold)]/35 flex items-center gap-2 text-[11px] font-medium text-[var(--color-muted)]">
+                <Info size={14} className="text-[var(--color-gold)] shrink-0" aria-hidden="true" />
+                <span>
+                  يمكنك استخدام أزرار التواصل الجانبية لطلب صور أو مقاطع فيديو إضافية من المربي قبل الشراء.
+                </span>
+              </div>
             </div>
 
-            {/* Share Listing Bar */}
-            <div className="mt-5 pt-4 border-t border-[var(--color-border)]">
-              <div className="flex items-center justify-between gap-2 mb-2.5">
-                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--color-ink)]">
-                  <Share2 size={14} className="text-[var(--color-green-ink)]" aria-hidden="true" />
-                  <span>مشاركة الإعلان</span>
-                </span>
+            {/* 4. Structured Specifications Card (3-column Icon Cards with Vertical Accent Bar) */}
+            <section className="mb-5 rounded-2xl border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-xs sm:p-6">
+              <div className="mb-5 flex items-stretch gap-3 border-b border-[var(--color-border)] pb-4">
+                <span className="w-1 shrink-0 rounded-full bg-[var(--color-gold)]" aria-hidden="true" />
+                <div>
+                  <h2 className="font-display text-base font-extrabold text-[var(--color-ink)]">
+                    المواصفات التفصيلية للعرض
+                  </h2>
+                  <p className="mt-0.5 text-[11px] leading-4 text-[var(--color-muted)]">
+                    البيانات الأساسية الموثقة من المربي لهذا الإعلان
+                  </p>
+                </div>
+              </div>
+
+              <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
+                {specCards.map((spec) => {
+                  const Icon = spec.icon;
+                  return (
+                    <div
+                      key={spec.label}
+                      className="group relative flex min-h-[90px] items-center gap-3.5 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-warm)] dark:bg-[var(--color-cream)]/40 p-4 transition-all duration-200 hover:-translate-y-px hover:border-[var(--color-gold)] hover:bg-[var(--color-surface)] hover:shadow-md"
+                    >
+                      <span
+                        className="absolute inset-y-3 right-0 w-[3px] origin-center scale-y-0 rounded-l-full bg-[var(--color-gold)] transition-transform duration-200 group-hover:scale-y-100"
+                        aria-hidden="true"
+                      />
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--color-gold)]/45 bg-[var(--color-gold-soft)]/70 dark:bg-[var(--color-surface)] text-[var(--color-green-ink)] transition-colors duration-200 group-hover:border-[var(--color-green)] group-hover:bg-[var(--color-green)] group-hover:text-white">
+                        <Icon className="h-[17px] w-[17px]" aria-hidden="true" />
+                      </span>
+                      <div className="min-w-0">
+                        <dt className="text-[11px] font-semibold text-[var(--color-muted)]">
+                          {spec.label}
+                        </dt>
+                        <dd
+                          className={`mt-1 break-words text-sm font-bold leading-5 ${
+                            spec.highlight
+                              ? 'text-[var(--color-green-ink)]'
+                              : 'text-[var(--color-ink)]'
+                          }`}
+                        >
+                          {spec.value}
+                        </dd>
+                      </div>
+                    </div>
+                  );
+                })}
+              </dl>
+            </section>
+
+            {/* 5. Listing Description Card */}
+            <div className="mb-5 rounded-2xl border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-xs sm:p-6">
+              <div className="mb-5 flex items-stretch gap-3 border-b border-[var(--color-border)] pb-4">
+                <span className="w-1 shrink-0 rounded-full bg-[var(--color-gold)]" aria-hidden="true" />
+                <div>
+                  <h2 className="font-display text-base font-extrabold text-[var(--color-ink)]">
+                    وصف الإعلان وتفاصيل المربي
+                  </h2>
+                  <p className="mt-0.5 text-[11px] leading-4 text-[var(--color-muted)]">
+                    المعلومات والملاحظات المرفقة من صاحب الإعلان
+                  </p>
+                </div>
+              </div>
+              <div className="text-sm text-[var(--color-ink)]/90 leading-relaxed whitespace-pre-line break-words">
+                {listing.description}
+              </div>
+            </div>
+
+            {/* 6. Location Card (Visual Region Preview + 3 Info Boxes, CSP-Safe) */}
+            <div className="mb-5 rounded-2xl border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-xs sm:p-6">
+              <div className="mb-5 flex items-stretch gap-3 border-b border-[var(--color-border)] pb-4">
+                <span className="w-1 shrink-0 rounded-full bg-[var(--color-gold)]" aria-hidden="true" />
+                <div>
+                  <h2 className="font-display text-base font-extrabold text-[var(--color-ink)]">
+                    الموقع الجغرافي
+                  </h2>
+                  <p className="mt-0.5 text-[11px] leading-4 text-[var(--color-muted)]">
+                    نطاق تواجد الحلال والمعاينة الميدانية
+                  </p>
+                </div>
+              </div>
+
+              {/* Clean SVG Topographic Map Preview */}
+              <div className="relative h-[165px] sm:h-[195px] rounded-xl overflow-hidden mb-4 border-[1.5px] border-[var(--color-border)] bg-[var(--color-cream)]/55 flex flex-col items-center justify-center text-center px-4">
+                <svg
+                  className="absolute inset-0 w-full h-full opacity-25 text-[var(--color-green-ink)] pointer-events-none"
+                  aria-hidden="true"
+                >
+                  <defs>
+                    <pattern id="souq-map-grid" width="32" height="32" patternUnits="userSpaceOnUse">
+                      <path
+                        d="M 32 0 L 0 0 0 32"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="0.6"
+                      />
+                    </pattern>
+                  </defs>
+                  <rect width="100%" height="100%" fill="url(#souq-map-grid)" />
+                </svg>
+
+                <div className="relative z-10 flex flex-col items-center gap-2">
+                  <div className="w-12 h-12 rounded-full bg-[var(--color-green)] text-white shadow-md border-2 border-[var(--color-gold)] flex items-center justify-center">
+                    <MapPin size={22} aria-hidden="true" />
+                  </div>
+                  <p className="font-display text-sm sm:text-base font-extrabold text-[var(--color-ink)]">
+                    {locationSummary || 'المملكة العربية السعودية'}
+                  </p>
+                  <a
+                    href={mapsSearchUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-gold)]/55 bg-[var(--color-surface)] px-3.5 py-1.5 text-xs font-bold text-[var(--color-green-ink)] hover:border-[var(--color-green)] hover:bg-[var(--color-green)] hover:text-white transition-colors shadow-xs"
+                  >
+                    <Navigation size={13} aria-hidden="true" />
+                    <span>عرض النطاق التقريبي على الخريطة</span>
+                  </a>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+                <div className="group flex min-w-0 items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-warm)] dark:bg-[var(--color-cream)]/40 p-3 transition-all duration-200 hover:-translate-y-px hover:border-[var(--color-gold)] hover:bg-[var(--color-surface)]">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--color-gold)]/45 bg-[var(--color-gold-soft)]/60 text-[var(--color-green-ink)] transition-colors group-hover:bg-[var(--color-green)] group-hover:text-white">
+                    <MapPin className="h-4 w-4" aria-hidden="true" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-[10px] font-semibold text-[var(--color-muted)]">
+                      المنطقة
+                    </span>
+                    <strong className="mt-0.5 block truncate text-[13px] font-bold text-[var(--color-ink)]">
+                      {region?.name || 'غير محدد'}
+                    </strong>
+                  </span>
+                </div>
+
+                <div className="group flex min-w-0 items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-warm)] dark:bg-[var(--color-cream)]/40 p-3 transition-all duration-200 hover:-translate-y-px hover:border-[var(--color-gold)] hover:bg-[var(--color-surface)]">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--color-gold)]/45 bg-[var(--color-gold-soft)]/60 text-[var(--color-green-ink)] transition-colors group-hover:bg-[var(--color-green)] group-hover:text-white">
+                    <Navigation className="h-4 w-4" aria-hidden="true" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-[10px] font-semibold text-[var(--color-muted)]">
+                      المدينة / المحافظة
+                    </span>
+                    <strong className="mt-0.5 block truncate text-[13px] font-bold text-[var(--color-ink)]">
+                      {listing.city || 'غير محدد'}
+                    </strong>
+                  </span>
+                </div>
+
+                <div className="group flex min-w-0 items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-warm)] dark:bg-[var(--color-cream)]/40 p-3 transition-all duration-200 hover:-translate-y-px hover:border-[var(--color-gold)] hover:bg-[var(--color-surface)]">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--color-gold)]/45 bg-[var(--color-gold-soft)]/60 text-[var(--color-green-ink)] transition-colors group-hover:bg-[var(--color-green)] group-hover:text-white">
+                    <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-[10px] font-semibold text-[var(--color-muted)]">
+                      المعاينة والاستلام
+                    </span>
+                    <strong className="mt-0.5 block truncate text-[13px] font-bold text-[var(--color-ink)]">
+                      معاينة مباشرة بالموقع
+                    </strong>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* 7. Share & Report Card */}
+            <div className="bg-[var(--color-surface)] border-[1.5px] border-[var(--color-border)] rounded-2xl p-5 sm:p-6 mb-5 shadow-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <div className="flex items-center gap-2">
+                  <Share2 size={15} className="text-[var(--color-green-ink)]" aria-hidden="true" />
+                  <h2 className="font-display text-sm font-extrabold text-[var(--color-ink)]">
+                    شارك هذا الإعلان
+                  </h2>
+                </div>
                 <span className="text-[11px] text-[var(--color-muted)]">
-                  انسخ الرابط أو شاركه مباشرة
+                  انسخ الرابط أو أرسله مباشرة عبر التطبيقات
                 </span>
               </div>
 
@@ -1591,7 +1377,7 @@ export function ListingDetailView({
                   <button
                     type="button"
                     onClick={handleNativeShare}
-                    className="h-10 px-3.5 rounded-lg bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                    className="h-10 px-3.5 rounded-[9px] bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-bold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                   >
                     <Share2 size={14} aria-hidden="true" />
                     <span>مشاركة عبر الجهاز</span>
@@ -1603,13 +1389,9 @@ export function ListingDetailView({
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label="مشاركة الإعلان عبر واتساب"
-                  className="h-10 px-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-cream)] text-xs font-semibold text-[var(--color-green-ink)] inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                  className="h-10 px-3.5 rounded-[9px] border border-[var(--color-border)] bg-[var(--color-surface-warm)] hover:border-[#1B7A3A] hover:text-[#1B7A3A] text-xs font-bold text-[var(--color-ink)] inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
                 >
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="w-3.5 h-3.5 fill-current"
-                    aria-hidden="true"
-                  >
+                  <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-current" aria-hidden="true">
                     <path d="M12.04 2a9.93 9.93 0 0 0-8.5 15.05L2 22l5.1-1.34A9.93 9.93 0 1 0 12.04 2Zm5.78 14.08c-.24.68-1.4 1.3-1.94 1.38-.5.07-1.13.1-1.82-.12-.42-.14-.96-.32-1.65-.62-2.9-1.25-4.79-4.18-4.93-4.37-.14-.2-1.18-1.57-1.18-3 0-1.42.74-2.12 1-2.41.27-.29.58-.36.77-.36h.56c.18 0 .42-.07.66.5.24.58.82 2 .9 2.14.07.14.12.31.02.5-.1.2-.15.32-.29.49-.15.17-.3.38-.44.51-.14.15-.3.3-.13.59.17.29.75 1.24 1.61 2.01 1.11.99 2.04 1.3 2.33 1.44.29.15.46.12.63-.07.17-.2.72-.84.91-1.13.2-.29.39-.24.65-.15.27.1 1.68.8 1.97.94.29.15.48.22.55.34.07.12.07.7-.17 1.38Z" />
                   </svg>
                   <span>واتساب</span>
@@ -1618,17 +1400,13 @@ export function ListingDetailView({
                 <button
                   type="button"
                   onClick={handleCopyShareLink}
-                  className={`h-10 px-3.5 rounded-lg border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  className={`h-10 px-3.5 rounded-[9px] border text-xs font-bold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                     copiedLink
-                      ? 'bg-[var(--color-cream)] border-[var(--color-green-ink)] text-[var(--color-green-ink)]'
-                      : 'bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-ink)] hover:bg-[var(--color-cream)]'
+                      ? 'bg-[var(--color-gold-soft)]/70 border-[var(--color-gold)] text-[var(--color-green-ink)]'
+                      : 'bg-[var(--color-surface-warm)] border-[var(--color-border)] text-[var(--color-ink)] hover:border-[var(--color-gold)]'
                   }`}
                 >
-                  {copiedLink ? (
-                    <Check size={14} aria-hidden="true" />
-                  ) : (
-                    <Copy size={14} aria-hidden="true" />
-                  )}
+                  {copiedLink ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
                   <span>{copiedLink ? 'تم نسخ الرابط' : 'نسخ الرابط'}</span>
                 </button>
 
@@ -1636,22 +1414,18 @@ export function ListingDetailView({
                   href={sharePayload.twitterHref}
                   target="_blank"
                   rel="noopener noreferrer"
-                  aria-label="مشاركة الإعلان عبر تويتر X"
-                  className="h-10 px-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-cream)] text-xs font-semibold text-[var(--color-ink)] inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                  aria-label="مشاركة الإعلان عبر منصة X"
+                  className="h-10 px-3.5 rounded-[9px] border border-[var(--color-border)] bg-[var(--color-surface-warm)] hover:border-[var(--color-gold)] text-xs font-bold text-[var(--color-ink)] inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
                 >
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="w-3.5 h-3.5 fill-current"
-                    aria-hidden="true"
-                  >
+                  <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-current" aria-hidden="true">
                     <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
                   </svg>
-                  <span>تويتر (X)</span>
+                  <span>إكس (X)</span>
                 </a>
               </div>
 
               {manualShareUrlVisible && (
-                <div className="mt-2.5 flex items-center gap-2">
+                <div className="mt-3 flex items-center gap-2">
                   <input
                     type="text"
                     readOnly
@@ -1670,925 +1444,922 @@ export function ListingDetailView({
                   </button>
                 </div>
               )}
+
+              {!isOwner && (
+                <div className="mt-5 border-t border-[var(--color-border)] pt-4 flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!currentUser) {
+                        onRequireAuth?.('login');
+                        return;
+                      }
+                      setReportError('');
+                      setShowReportModal(true);
+                    }}
+                    className="inline-flex items-center gap-2 text-xs font-bold text-[var(--color-muted)] transition hover:text-red-700 dark:hover:text-red-400 cursor-pointer"
+                  >
+                    <Flag size={14} aria-hidden="true" />
+                    <span>إبلاغ عن مخالفة في هذا الإعلان</span>
+                  </button>
+                  <span className="text-[11px] text-[var(--color-muted)] hidden sm:inline">
+                    يخضع للمراجعة الإدارية الفورية
+                  </span>
+                </div>
+              )}
             </div>
 
-            {/* Direct Message Form (Authenticated Non-Owners Only) */}
-            {currentUser && !isOwner && (
-              <form
-                onSubmit={handleSendMessage}
-                className="mt-6 pt-5 border-t border-[var(--color-border)]"
-              >
-                <label
-                  htmlFor="direct-msg"
-                  className="block text-sm font-semibold text-[var(--color-ink)] mb-2"
-                >
-                  تواصل مباشر عبر رسائل المنصة
-                </label>
-                <textarea
-                  ref={directMsgRef}
-                  id="direct-msg"
-                  rows={3}
-                  value={messageText}
-                  onChange={(e) => {
-                    setMessageText(e.target.value);
-                    if (msgError) setMsgError('');
-                  }}
-                  className="w-full p-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-cream)]/50 text-sm text-[var(--color-ink)] focus:outline-none focus:border-[var(--color-green-ink)]"
-                />
-                <button
-                  type="submit"
-                  disabled={sendingMsg}
-                  className="mt-2.5 w-full h-11 rounded-lg border border-[var(--color-green-ink)] text-[var(--color-green-ink)] hover:bg-[var(--color-green)] hover:text-white hover:border-[var(--color-green)] text-sm font-bold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-60"
-                >
-                  <MessageSquare size={16} aria-hidden="true" />
-                  <span>{sendingMsg ? 'جاري الإرسال...' : 'إرسال رسالة للبائع'}</span>
-                </button>
-                {msgError && (
-                  <p
-                    role="alert"
-                    className="mt-2 p-2.5 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-xs text-red-700 dark:text-red-300"
-                  >
-                    {msgError}
+            {/* 8. Price Offers / Negotiation Log */}
+            {allowsOffers && (
+              <div className="mb-5 rounded-2xl border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-xs sm:p-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[var(--color-border)]">
+                  <div className="flex items-stretch gap-3">
+                    <span className="w-1 shrink-0 rounded-full bg-[var(--color-gold)]" aria-hidden="true" />
+                    <div>
+                      <h2 className="font-display text-base font-extrabold text-[var(--color-ink)]">
+                        سجل عروض الأسعار والتفاوض ({listingOffers.length})
+                      </h2>
+                      <p className="text-[11px] text-[var(--color-muted)] mt-0.5">
+                        عروض السوم المقدمة من المشترين على هذا الإعلان مع حالة رد المربي
+                      </p>
+                    </div>
+                  </div>
+
+                  {!isOwner && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenOfferModal()}
+                      className="min-h-[38px] px-4 py-2 rounded-xl bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-bold inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      <BadgeDollarSign size={15} aria-hidden="true" />
+                      <span>تقديم عرض سعر</span>
+                    </button>
+                  )}
+                </div>
+
+                {listingOffers.length === 0 ? (
+                  <p className="mt-4 text-xs sm:text-sm text-[var(--color-muted)]">
+                    لا توجد عروض أسعار مقدمة حتى الآن. كن أول من يقدم سومة للمربي.
                   </p>
+                ) : (
+                  <div className="mt-3 divide-y divide-[var(--color-border)]">
+                    {listingOffers.map((offer) => (
+                      <div
+                        key={offer.id}
+                        className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                      >
+                        <div>
+                          <div className="flex items-center flex-wrap gap-2 text-xs text-[var(--color-muted)]">
+                            <span className="font-bold text-[var(--color-ink)]">
+                              {offer.buyerName}
+                            </span>
+                            <span aria-hidden="true">·</span>
+                            <span className="tabular-nums">الكمية: {offer.quantity} رأس</span>
+                            <span aria-hidden="true">·</span>
+                            <span>{formatRelativeArabicTime(offer.createdAt)}</span>
+                          </div>
+                          <p className="font-display text-base font-extrabold text-[var(--color-green-ink)] tabular-nums mt-1">
+                            {formatPriceSar(offer.offeredPrice)} للرأس
+                            <span className="text-xs font-medium text-[var(--color-muted)] mr-2">
+                              (الإجمالي: {formatPriceSar(offer.offeredPrice * offer.quantity)})
+                            </span>
+                          </p>
+                          {offer.note && (
+                            <p className="text-xs text-[var(--color-muted)] mt-1">{offer.note}</p>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                          <span
+                            className={`text-xs font-bold ${
+                              offer.status === 'accepted'
+                                ? 'text-[var(--color-green-ink)]'
+                                : offer.status === 'rejected'
+                                ? 'text-red-700 dark:text-red-400'
+                                : 'text-[var(--color-gold)]'
+                            }`}
+                          >
+                            {formatOfferStatus(offer.status)}
+                          </span>
+
+                          {canRespondOffers && offer.status === 'pending' && (
+                            <div className="flex items-center gap-1.5 mr-1">
+                              <button
+                                type="button"
+                                onClick={() => onRespondToOffer(offer.id, 'accepted')}
+                                className="min-h-[38px] px-3 py-1.5 rounded-lg bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                <CheckCircle2 size={13} aria-hidden="true" />
+                                <span>قبول</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onRespondToOffer(offer.id, 'rejected')}
+                                className="min-h-[38px] px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-900/60 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                <XCircle size={13} aria-hidden="true" />
+                                <span>رفض</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
-                {msgSuccess && (
-                  <p className="mt-2 text-xs font-medium text-[var(--color-green-ink)]">
-                    تم إرسال رسالتك بنجاح. يمكنك متابعة الرد من تبويب «المحادثات» في حسابي.
-                  </p>
-                )}
-              </form>
+              </div>
             )}
           </div>
 
-          {/* Seller Trust Card */}
-          {seller && (
-            <div className="bg-[var(--color-cream)] rounded-2xl border border-[var(--color-border)] p-5">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-start gap-3 min-w-0">
-                  <div className="w-11 h-11 rounded-xl bg-[var(--color-green)] text-white flex items-center justify-center shrink-0">
-                    <UserIcon size={20} aria-hidden="true" />
-                  </div>
-                  <div className="min-w-0">
+          {/* STICKY SIDEBAR (Left in RTL — exact Celebim aside stack) */}
+          <aside className="flex flex-col gap-4 lg:sticky lg:top-20 min-w-0">
+            {/* Owner Management Card */}
+            {isOwner && (
+              <div className="rounded-2xl border-[1.5px] border-[var(--color-gold)]/55 bg-[var(--color-surface)] p-5 shadow-xs space-y-3">
+                <div className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] pb-3">
+                  <p className="font-display text-sm font-extrabold text-[var(--color-ink)]">
+                    إدارة إعلانك
+                  </p>
+                  <span className="rounded-md bg-[var(--color-gold-soft)] px-2 py-0.5 text-[11px] font-bold text-[var(--color-green-ink)]">
+                    {formatStatusLabel(listing.status)}
+                  </span>
+                </div>
+
+                {listing.rejectionReason && (
+                  <p className="text-xs text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 rounded-lg p-2.5">
+                    سبب الرفض: {listing.rejectionReason}
+                  </p>
+                )}
+
+                <div className="flex flex-wrap gap-2">
+                  {onEditListing && (
+                    <button
+                      type="button"
+                      onClick={() => onEditListing(listing)}
+                      className="flex-1 min-w-[120px] min-h-[42px] px-3.5 rounded-xl bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-bold inline-flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Pencil size={14} aria-hidden="true" />
+                      <span>تعديل الإعلان</span>
+                    </button>
+                  )}
+                  {onMarkSold && isPublished && (
+                    <button
+                      type="button"
+                      disabled={markingSold}
+                      onClick={handleConfirmMarkSold}
+                      className="flex-1 min-w-[120px] min-h-[42px] px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-warm)] hover:border-[var(--color-gold)] text-[var(--color-ink)] text-xs font-bold inline-flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
+                    >
+                      <CheckCircle2 size={14} aria-hidden="true" />
+                      <span>{markingSold ? 'جاري التحديث...' : 'تحديد كمباع'}</span>
+                    </button>
+                  )}
+                </div>
+
+                {!listing.isFeatured &&
+                  (listing.status === 'Published' || listing.status === 'Pending') && (
+                    <div className="pt-2.5 border-t border-[var(--color-border)] space-y-2 text-xs">
+                      {listing.featuredRequested ? (
+                        <span className="text-[var(--color-green-ink)] font-bold inline-flex items-center gap-1.5">
+                          <Sparkles size={14} className="text-[var(--color-gold)] shrink-0" aria-hidden="true" />
+                          <span>طلب تمييز الإعلان مسجل — أكمل الحوالة من لوحة حسابي</span>
+                        </span>
+                      ) : (
+                        <>
+                          <p className="text-[var(--color-muted)]">
+                            تمييز وتثبيت الإعلان ({formatPriceSar(commissionSettings?.featuredWeeklyPriceSar ?? 35)} / أسبوع):
+                          </p>
+                          <button
+                            type="button"
+                            disabled={requestingFeature}
+                            onClick={handleRequestFeatured}
+                            className="w-full min-h-[38px] px-3 rounded-xl border border-[var(--color-gold)] bg-[var(--color-gold-soft)]/50 hover:bg-[var(--color-gold-soft)] text-xs font-bold text-[var(--color-green-ink)] inline-flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
+                          >
+                            <Sparkles size={13} className="text-[var(--color-gold)]" aria-hidden="true" />
+                            <span>{requestingFeature ? 'جاري الطلب...' : 'طلب تمييز الإعلان'}</span>
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
+              </div>
+            )}
+
+            {/* Seller Info & Direct Contact Card (Celebim q Card) */}
+            {seller && (
+              <div className="rounded-2xl border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-xs sm:p-[22px]">
+                <div className="mb-4 text-[12px] font-bold tracking-[0.04em] text-[var(--color-muted)]">
+                  معلومات البائع والمربّي
+                </div>
+
+                <div className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] pb-4 mb-4">
+                  <div className="flex items-center gap-3 min-w-0">
                     <button
                       type="button"
                       onClick={() => onOpenSellerProfile(seller.userId)}
-                      className="font-display text-base font-bold text-[var(--color-ink)] hover:text-[var(--color-green-ink)] hover:underline text-right cursor-pointer truncate max-w-full block"
+                      aria-label={`عرض ملف المربي ${seller.displayName}`}
+                      className="w-14 h-14 rounded-full bg-[var(--color-gold-soft)] border-[2.5px] border-[var(--color-gold)]/60 flex items-center justify-center text-xl font-black text-[var(--color-green-ink)] shrink-0 hover:scale-105 transition-transform duration-200 cursor-pointer"
                     >
-                      {seller.displayName}
+                      {sellerInitials || <UserIcon size={22} aria-hidden="true" />}
                     </button>
-                    <p className="text-xs text-[var(--color-muted)] mt-0.5">
-                      {seller.city} · خبرة {seller.yearsExperience} سنة
-                    </p>
-                  </div>
-                </div>
-                {isSellerVerified(seller) ? (
-                  <VerifiedSellerBadge variant="badge" />
-                ) : (
-                  <span className="text-[11px] font-medium text-[var(--color-muted)] shrink-0">
-                    حساب مسجّل
-                  </span>
-                )}
-              </div>
 
-              {seller.bio && (
-                <p className="mt-3 text-xs text-[var(--color-muted)] leading-relaxed">
-                  {seller.bio}
-                </p>
-              )}
-
-              <div className="mt-4 pt-3 border-t border-[var(--color-border)] flex items-center justify-between gap-2 flex-wrap">
-                <span className="text-xs text-[var(--color-muted)] tabular-nums">
-                  {(seller.ratingCount ?? 0) > 0
-                    ? `التقييم: ${seller.rating} / 5 (${seller.ratingCount})`
-                    : 'حساب مربي بالسوق'}{' '}
-                  · إتمام {seller.totalSales} بيعة
-                </span>
-                <button
-                  type="button"
-                  onClick={() => onOpenSellerProfile(seller.userId)}
-                  className="text-xs font-semibold text-[var(--color-green-ink)] hover:underline cursor-pointer"
-                >
-                  عرض ملف المربي وإعلاناته
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Report Violation Trigger (Hidden for listing owner) */}
-          {!isOwner && (
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() => {
-                  if (!currentUser) {
-                    onRequireAuth?.('login');
-                    return;
-                  }
-                  setReportError('');
-                  setShowReportModal(true);
-                }}
-                className="min-h-[36px] px-2 rounded-lg inline-flex items-center gap-1.5 text-xs text-[var(--color-muted)] hover:text-red-700 dark:hover:text-red-400 hover:bg-[var(--color-cream)] transition-colors cursor-pointer"
-              >
-                <Flag size={13} aria-hidden="true" />
-                <span>إبلاغ عن مخالفة في هذا الإعلان</span>
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Public Questions & Comments Section */}
-      <ListingCommentsSection
-        listing={listing}
-        currentUser={currentUser}
-        refreshSignal={commentRefreshSignal}
-        targetCommentId={targetCommentId}
-        onRequireAuth={() => onRequireAuth?.('login')}
-        onNotify={onNotify}
-      />
-
-      {/* Livestock Comparison Section */}
-      <div
-        id="livestock-compare-section"
-        ref={compareSectionRef}
-        className="mt-8 bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-4 sm:p-6 space-y-5"
-      >
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-[var(--color-border)]">
-          <div>
-            <div className="flex items-center gap-2 text-[var(--color-green-ink)]">
-              <Scale size={18} aria-hidden="true" />
-              <h2 className="font-display text-lg sm:text-xl font-bold text-[var(--color-ink)]">
-                مقارنة المواشي ({compareListings.length} / 4)
-              </h2>
-            </div>
-            <p className="mt-1 text-xs text-[var(--color-muted)]">
-              أضف أكثر من إعلان لمقارنة السعر والوزن والسلالة والتحصين والموقع في جدول واحد واضح لمساعدتك في اتخاذ القرار.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2.5">
-            {compareIds.length < 4 && availableToCompare.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                <select
-                  aria-label="اختر إعلاناً لإضافته إلى المقارنة"
-                  value={comparePickId}
-                  onChange={(e) => setComparePickId(e.target.value)}
-                  className="h-10 w-full sm:w-auto sm:max-w-[260px] min-w-0 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-ink)] focus:outline-none focus:border-[var(--color-green-ink)]"
-                >
-                  {availableToCompare.map((item) => {
-                    const itemBreed = allBreeds.find((b) => b.id === item.breedId);
-                    return (
-                      <option key={item.id} value={item.id}>
-                        {itemBreed?.name ? `${itemBreed.name} — ` : ''}
-                        {item.title.slice(0, 34)} ({formatPriceSar(item.priceAmount)})
-                      </option>
-                    );
-                  })}
-                </select>
-                <button
-                  type="button"
-                  disabled={!comparePickId}
-                  onClick={() => {
-                    if (comparePickId) onToggleCompare(comparePickId);
-                  }}
-                  className="h-10 px-3.5 rounded-lg bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
-                >
-                  <Plus size={14} aria-hidden="true" />
-                  <span>إضافة للمقارنة</span>
-                </button>
-              </div>
-            )}
-
-            {compareListings.length >= 2 && (
-              <button
-                type="button"
-                aria-pressed={showDiffsOnly}
-                onClick={() => setShowDiffsOnly((prev) => !prev)}
-                className={`h-10 px-3.5 rounded-lg border text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  showDiffsOnly
-                    ? 'bg-[var(--color-cream)] border-[var(--color-green-ink)] text-[var(--color-green-ink)]'
-                    : 'bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-ink)] hover:bg-[var(--color-cream)]'
-                }`}
-              >
-                {showDiffsOnly ? 'عرض جميع المواصفات' : 'إبراز الفروقات فقط'}
-              </button>
-            )}
-
-            {compareListings.length > 0 && (
-              <button
-                type="button"
-                onClick={onClearCompare}
-                className="h-10 px-3.5 rounded-lg border border-[var(--color-border)] text-xs font-semibold text-[var(--color-muted)] hover:text-red-700 dark:hover:text-red-400 hover:bg-[var(--color-cream)] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
-              >
-                <Trash2 size={14} aria-hidden="true" />
-                <span>مسح القائمة</span>
-              </button>
-            )}
-          </div>
-        </div>
-
-        {compareListings.length === 0 ? (
-          <div className="py-8 px-6 text-center rounded-xl border border-[var(--color-border)] bg-[var(--color-cream)]/40">
-            <p className="font-display text-base font-bold text-[var(--color-ink)]">
-              قائمة مقارنة المواشي فارغة حالياً
-            </p>
-            <p className="mt-1 text-xs text-[var(--color-muted)] max-w-lg mx-auto leading-relaxed">
-              ابدأ بإضافة هذا الإعلان إلى قائمة المقارنة ثم أضف إعلانات أخرى من القائمة أعلاه أو أثناء تصفح الإعلانات لمشاهدة جدول الفروقات.
-            </p>
-            <button
-              type="button"
-              onClick={() => onToggleCompare(listing.id)}
-              className="mt-4 h-10 px-5 rounded-lg bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-            >
-              <Scale size={14} aria-hidden="true" />
-              <span>إضافة هذا الإعلان للمقارنة</span>
-            </button>
-          </div>
-        ) : (
-          (() => {
-            const minPrice = Math.min(...compareListings.map((i) => i.priceAmount));
-            const maxWeight = Math.max(...compareListings.map((i) => i.weightKg));
-            const perKgValues = compareListings
-              .filter((i) => i.weightKg > 0)
-              .map((i) => Math.round(i.priceAmount / i.weightKg));
-            const minPerKg = perKgValues.length > 0 ? Math.min(...perKgValues) : null;
-
-            const comparisonRows: Array<{
-              key: string;
-              label: string;
-              getValue: (item: Listing) => string;
-              renderCell: (item: Listing) => ReactNode;
-            }> = [
-              {
-                key: 'price',
-                label: 'السعر المطلوب للرأس',
-                getValue: (item) => String(item.priceAmount),
-                renderCell: (item) => (
-                  <div>
-                    <span className="font-display text-base font-extrabold text-[var(--color-green-ink)] tabular-nums">
-                      {formatPriceSar(item.priceAmount)}
-                    </span>
-                    {compareListings.length >= 2 && item.priceAmount === minPrice && (
-                      <span className="block text-[11px] font-semibold text-[var(--color-green-ink)] mt-0.5">
-                        الأقل سعراً
-                      </span>
-                    )}
-                  </div>
-                ),
-              },
-              {
-                key: 'expectedPrice',
-                label: 'السعر المتوقع / السوم',
-                getValue: (item) => (item.expectedPrice ? String(item.expectedPrice) : '-'),
-                renderCell: (item) => (
-                  <span className="tabular-nums font-semibold text-[var(--color-ink)]">
-                    {item.expectedPrice ? formatPriceSar(item.expectedPrice) : '—'}
-                  </span>
-                ),
-              },
-              {
-                key: 'pricePerKg',
-                label: 'التكلفة التقديرية للكيلو',
-                getValue: (item) =>
-                  item.weightKg > 0 ? String(Math.round(item.priceAmount / item.weightKg)) : '-',
-                renderCell: (item) => {
-                  const perKg = item.weightKg > 0 ? Math.round(item.priceAmount / item.weightKg) : 0;
-                  return (
-                    <div>
-                      <span className="tabular-nums font-semibold text-[var(--color-ink)]">
-                        {perKg > 0 ? `${perKg.toLocaleString('en-US')} ر.س / كجم` : '—'}
-                      </span>
-                      {compareListings.length >= 2 && minPerKg !== null && perKg === minPerKg && (
-                        <span className="block text-[11px] font-semibold text-[var(--color-green-ink)] mt-0.5">
-                          أفضل قيمة للوزن
-                        </span>
-                      )}
-                    </div>
-                  );
-                },
-              },
-              {
-                key: 'breed',
-                label: 'السلالة والتصنيف',
-                getValue: (item) => {
-                  const b = allBreeds.find((x) => x.id === item.breedId)?.name || '';
-                  const c = allCategories.find((x) => x.id === item.categoryId)?.name || '';
-                  const sc = allCategories.find((x) => x.id === item.subCategoryId)?.name || '';
-                  return `${b}|${c}|${sc}`;
-                },
-                renderCell: (item) => {
-                  const b = allBreeds.find((x) => x.id === item.breedId);
-                  const c = allCategories.find((x) => x.id === item.categoryId);
-                  const sc = allCategories.find((x) => x.id === item.subCategoryId);
-                  return (
-                    <div className="space-y-0.5">
-                      <p className="font-semibold text-[var(--color-ink)]">
-                        {b?.name || 'غير محدد'}
-                      </p>
-                      <p className="text-xs text-[var(--color-muted)]">
-                        {c?.name || 'أغنام'}
-                        {sc ? ` · ${sc.name}` : ''}
-                      </p>
-                    </div>
-                  );
-                },
-              },
-              {
-                key: 'weight',
-                label: 'الوزن التقريبي',
-                getValue: (item) => String(item.weightKg),
-                renderCell: (item) => (
-                  <div>
-                    <span className="tabular-nums font-bold text-[var(--color-ink)]">
-                      {item.weightKg} كجم
-                    </span>
-                    {compareListings.length >= 2 && item.weightKg === maxWeight && (
-                      <span className="block text-[11px] font-semibold text-[var(--color-green-ink)] mt-0.5">
-                        الأعلى وزناً
-                      </span>
-                    )}
-                  </div>
-                ),
-              },
-              {
-                key: 'age',
-                label: 'العمر التقريبي',
-                getValue: (item) => String(item.ageMonths),
-                renderCell: (item) => (
-                  <span className="tabular-nums text-[var(--color-ink)]">
-                    {item.ageMonths} أشهر
-                  </span>
-                ),
-              },
-              {
-                key: 'sex',
-                label: 'الجنس',
-                getValue: (item) => item.sex,
-                renderCell: (item) => <span className="text-[var(--color-ink)]">{item.sex}</span>,
-              },
-              {
-                key: 'quantity',
-                label: 'العدد المتاح',
-                getValue: (item) => String(item.quantity),
-                renderCell: (item) => (
-                  <span className="tabular-nums text-[var(--color-ink)]">
-                    {item.quantity} رأس
-                  </span>
-                ),
-              },
-              {
-                key: 'vaccinated',
-                label: 'التحصين البيطري',
-                getValue: (item) => String(item.vaccinated),
-                renderCell: (item) => (
-                  <span
-                    className={
-                      item.vaccinated
-                        ? 'font-semibold text-[var(--color-green-ink)]'
-                        : 'text-[var(--color-muted)]'
-                    }
-                  >
-                    {item.vaccinated ? 'محصّن (دموي ومعوي)' : 'حسب المعاينة'}
-                  </span>
-                ),
-              },
-              {
-                key: 'negotiation',
-                label: 'التفاوض وعروض السعر',
-                getValue: (item) => {
-                  const offersOn =
-                    item.allowPriceOffers !== undefined
-                      ? item.allowPriceOffers
-                      : item.isNegotiable;
-                  return `${offersOn}|${item.isNegotiable}`;
-                },
-                renderCell: (item) => {
-                  const offersOn =
-                    item.allowPriceOffers !== undefined
-                      ? item.allowPriceOffers
-                      : item.isNegotiable;
-                  return (
-                    <span className="text-[var(--color-ink)]">
-                      {offersOn
-                        ? 'يقبل عروض السعر (سوم)'
-                        : item.isNegotiable
-                        ? 'قابل للتفاوض'
-                        : 'سعر نهائي'}
-                    </span>
-                  );
-                },
-              },
-              {
-                key: 'location',
-                label: 'المنطقة والمدينة',
-                getValue: (item) => `${item.regionId}|${item.city}`,
-                renderCell: (item) => {
-                  const reg = allRegions.find((r) => r.id === item.regionId);
-                  return (
-                    <span className="text-[var(--color-ink)]">
-                      {reg?.name ? `${reg.name} — ${item.city}` : item.city}
-                    </span>
-                  );
-                },
-              },
-              {
-                key: 'seller',
-                label: 'المربي والتقييم',
-                getValue: (item) => item.sellerId,
-                renderCell: (item) => {
-                  const s = allSellers.find((x) => x.userId === item.sellerId);
-                  if (!s) return <span className="text-[var(--color-muted)]">—</span>;
-                  return (
-                    <div>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => onOpenSellerProfile(s.userId)}
-                          className="font-semibold text-[var(--color-green-ink)] hover:underline text-right cursor-pointer"
-                        >
-                          {s.displayName}
-                        </button>
-                        {isSellerVerified(s) && <VerifiedSellerBadge variant="compact" />}
+                    <div className="min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => onOpenSellerProfile(seller.userId)}
+                        className="block text-right text-base font-extrabold text-[var(--color-ink)] leading-tight mb-0.5 hover:text-[var(--color-green-ink)] transition-colors truncate max-w-full cursor-pointer"
+                      >
+                        {seller.displayName}
+                      </button>
+                      <div className="text-xs text-[var(--color-muted)] mb-1.5 truncate">
+                        {seller.city} · خبرة {seller.yearsExperience} سنة
                       </div>
-                      <p className="text-xs text-[var(--color-muted)] tabular-nums mt-0.5">
-                        {(s.ratingCount ?? 0) > 0 ? `التقييم: ${s.rating.toFixed(1)} / 5 · ` : ''}
-                        {s.totalSales} بيعة
-                      </p>
+
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {isSellerVerified(seller) ? (
+                          <VerifiedSellerBadge variant="badge" />
+                        ) : (
+                          <span className="inline-flex items-center rounded-md bg-[var(--color-cream)] px-2 py-0.5 text-[10px] font-bold text-[var(--color-muted)]">
+                            مربٍّ مسجّل
+                          </span>
+                        )}
+                        <span className="inline-flex items-center rounded-md bg-[var(--color-gold-soft)]/70 px-2 py-0.5 text-[10px] font-bold text-[var(--color-green-ink)] tabular-nums">
+                          {seller.totalSales} بيعة
+                        </span>
+                      </div>
                     </div>
-                  );
-                },
-              },
-            ];
+                  </div>
 
-            const visibleRows =
-              showDiffsOnly && compareListings.length >= 2
-                ? comparisonRows.filter((row) => {
-                    const values = compareListings.map((item) => row.getValue(item));
-                    return new Set(values).size > 1;
-                  })
-                : comparisonRows;
+                  <button
+                    type="button"
+                    onClick={() => onOpenSellerProfile(seller.userId)}
+                    aria-label="الانتقال إلى صفحة المربي"
+                    className="group flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-cream)]/80 hover:bg-[var(--color-gold-soft)] transition-colors cursor-pointer"
+                  >
+                    <ArrowLeft
+                      size={15}
+                      className="text-[var(--color-muted)] group-hover:text-[var(--color-green-ink)] transition-colors"
+                      aria-hidden="true"
+                    />
+                  </button>
+                </div>
 
-            return (
-              <div className="space-y-3">
-                {compareListings.length === 1 && (
-                  <p className="text-xs text-[var(--color-muted)] bg-[var(--color-cream)]/60 border border-[var(--color-border)] rounded-lg px-4 py-2.5">
-                    تمت إضافة إعلان واحد إلى المقارنة. اختر إعلاناً آخر من القائمة أعلاه لإظهار الفروقات جنباً إلى جنب.
+                {seller.bio && (
+                  <p className="mb-4 text-xs text-[var(--color-muted)] leading-relaxed line-clamp-3">
+                    {seller.bio}
                   </p>
                 )}
 
-                <div className="overflow-x-auto rounded-xl border border-[var(--color-border)]">
-                  <table className="w-full text-right text-sm border-collapse min-w-[640px]">
-                    <thead>
-                      <tr className="bg-[var(--color-cream)]/70 border-b border-[var(--color-border)] align-top">
-                        <th className="py-4 px-4 text-xs font-bold text-[var(--color-muted)] w-44 min-w-[160px] sticky right-0 bg-[var(--color-cream)] z-10 border-l border-[var(--color-border)]">
-                          مواصفات المقارنة
-                        </th>
-                        {compareListings.map((item) => {
-                          const itemBreed = allBreeds.find((b) => b.id === item.breedId);
-                          const thumbUrl = item.images[0]?.url || itemBreed?.imageUrl;
-                          const isCurrent = item.id === listing.id;
-                          return (
-                            <th
-                              key={item.id}
-                              className="py-4 px-4 min-w-[200px] max-w-[260px] font-normal align-top"
-                            >
-                              <div className="space-y-2.5">
-                                <div className="relative aspect-[4/3] w-full rounded-lg overflow-hidden bg-[var(--color-surface)] border border-[var(--color-border)]">
-                                  <SafeImage
-                                    src={thumbUrl}
-                                    alt={item.title}
-                                    width={800}
-                                    height={597}
-                                    className="w-full h-full object-cover"
-                                  />
-                                  <button
-                                    type="button"
-                                    onClick={() => onToggleCompare(item.id)}
-                                    aria-label={`إزالة ${item.title} من المقارنة`}
-                                    className="absolute top-2 left-2 w-11 h-11 sm:w-8 sm:h-8 rounded-md bg-[var(--color-surface)]/90 hover:bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-ink)] flex items-center justify-center cursor-pointer"
-                                  >
-                                    <X size={14} aria-hidden="true" />
-                                  </button>
-                                </div>
+                {/* Contact Actions Inside Seller Card */}
+                {!currentUser && (
+                  <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-warm)] dark:bg-[var(--color-cream)]/40 p-3.5 space-y-2.5">
+                    <p className="text-xs font-bold text-[var(--color-ink)]">
+                      سجّل الدخول لإظهار رقم البائع والواتساب
+                    </p>
+                    <p className="text-[11px] text-[var(--color-muted)] leading-relaxed">
+                      لحماية خصوصية المربّين، تظهر أرقام التواصل المباشر للأعضاء المسجلين فقط.
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onRequireAuth?.('login')}
+                        className="flex-1 min-h-[40px] px-3 rounded-xl bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-bold inline-flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <LogIn size={14} aria-hidden="true" />
+                        <span>تسجيل الدخول للتواصل</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onRequireAuth?.('register')}
+                        className="min-h-[40px] px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-gold)] text-[var(--color-green-ink)] text-xs font-bold inline-flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <UserPlus size={14} aria-hidden="true" />
+                        <span>جديد</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
 
+                {currentUser && !isOwner && (
+                  <div className="flex flex-col gap-2.5">
+                    {!isPublished ? (
+                      <div className="bg-[var(--color-cream)]/60 border border-[var(--color-border)] rounded-xl p-3 text-center">
+                        <p className="text-xs font-semibold text-[var(--color-muted)]">
+                          بيانات الاتصال المباشر متاحة فقط للإعلانات المنشورة.
+                        </p>
+                      </div>
+                    ) : seller.contactAvailable === false ? (
+                      <div className="bg-[var(--color-cream)]/60 border border-[var(--color-border)] rounded-xl p-3 text-center">
+                        <p className="text-xs font-semibold text-[var(--color-muted)]">
+                          فضّل البائع التواصل عبر رسائل المنصة الداخلية أدناه.
+                        </p>
+                      </div>
+                    ) : !revealedContact ? (
+                      <>
+                        <button
+                          type="button"
+                          disabled={revealingContact}
+                          onClick={handleRevealContact}
+                          className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#1B7A3A] px-4 py-3.5 text-sm font-bold text-white transition-colors hover:bg-[#155f2c] cursor-pointer disabled:opacity-60"
+                        >
+                          <Phone size={16} aria-hidden="true" />
+                          <span>
+                            {revealingContact ? 'جاري التحقق وإظهار الرقم...' : 'إظهار رقم البائع والواتساب'}
+                          </span>
+                        </button>
+                        {contactError && (
+                          <p
+                            role="alert"
+                            className="p-2.5 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-xs text-red-700 dark:text-red-300"
+                          >
+                            {contactError}
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {contactLinks.whatsappHref && (
+                          <a
+                            href={contactLinks.whatsappHref}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label={`مراسلة البائع ${seller.displayName} عبر واتساب`}
+                            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#1B7A3A] px-4 py-3.5 text-sm font-bold text-white transition-colors hover:bg-[#155f2c]"
+                          >
+                            <svg
+                              viewBox="0 0 24 24"
+                              className="w-4 h-4 fill-current shrink-0"
+                              aria-hidden="true"
+                            >
+                              <path d="M12.04 2a9.93 9.93 0 0 0-8.5 15.05L2 22l5.1-1.34A9.93 9.93 0 1 0 12.04 2Zm5.78 14.08c-.24.68-1.4 1.3-1.94 1.38-.5.07-1.13.1-1.82-.12-.42-.14-.96-.32-1.65-.62-2.9-1.25-4.79-4.18-4.93-4.37-.14-.2-1.18-1.57-1.18-3 0-1.42.74-2.12 1-2.41.27-.29.58-.36.77-.36h.56c.18 0 .42-.07.66.5.24.58.82 2 .9 2.14.07.14.12.31.02.5-.1.2-.15.32-.29.49-.15.17-.3.38-.44.51-.14.15-.3.3-.13.59.17.29.75 1.24 1.61 2.01 1.11.99 2.04 1.3 2.33 1.44.29.15.46.12.63-.07.17-.2.72-.84.91-1.13.2-.29.39-.24.65-.15.27.1 1.68.8 1.97.94.29.15.48.22.55.34.07.12.07.7-.17 1.38Z" />
+                            </svg>
+                            <span>تواصل عبر واتساب</span>
+                          </a>
+                        )}
+
+                        {contactLinks.phoneDisplay && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setShowPhone((p) => !p)}
+                              aria-expanded={showPhone}
+                              className="flex w-full items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm font-bold text-[var(--color-ink)] transition-colors hover:border-[var(--color-gold)] hover:text-[var(--color-green-ink)] cursor-pointer"
+                            >
+                              <Phone size={15} aria-hidden="true" />
+                              <span>{showPhone ? 'إخفاء رقم الجوال' : 'عرض رقم الجوال'}</span>
+                            </button>
+
+                            {showPhone && (
+                              <div className="bg-[var(--color-gold-soft)]/55 dark:bg-[var(--color-surface-warm)] border-[1.5px] border-dashed border-[var(--color-gold)]/70 rounded-xl p-3 text-center">
+                                <a
+                                  href={contactLinks.telHref || '#'}
+                                  dir="ltr"
+                                  className="block text-lg font-black text-[var(--color-ink)] tracking-wider tabular-nums hover:text-[var(--color-green-ink)]"
+                                >
+                                  {contactLinks.phoneDisplay}
+                                </a>
                                 <button
                                   type="button"
-                                  onClick={() => onSelectListing(item)}
-                                  className="font-display text-sm font-bold text-[var(--color-ink)] hover:text-[var(--color-green-ink)] text-right leading-snug line-clamp-2 cursor-pointer"
+                                  onClick={handleCopyPhone}
+                                  className="text-[11px] text-[var(--color-green-ink)] font-bold mt-1 hover:underline cursor-pointer"
                                 >
-                                  {item.title}
+                                  {copiedPhone ? 'تم النسخ ✓' : 'نسخ الرقم'}
                                 </button>
-
-                                {isCurrent ? (
-                                  <span className="block text-[11px] font-semibold text-[var(--color-green-ink)]">
-                                    الإعلان المعروض حالياً
-                                  </span>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() => onSelectListing(item)}
-                                    className="text-xs font-semibold text-[var(--color-green-ink)] hover:underline cursor-pointer"
-                                  >
-                                    فتح صفحة الإعلان
-                                  </button>
-                                )}
                               </div>
-                            </th>
-                          );
-                        })}
-                      </tr>
-                    </thead>
+                            )}
+                          </>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
 
-                    <tbody className="divide-y divide-[var(--color-border)] bg-[var(--color-surface)]">
-                      {visibleRows.length === 0 ? (
-                        <tr>
-                          <td
-                            colSpan={compareListings.length + 1}
-                            className="py-6 px-4 text-center text-xs text-[var(--color-muted)]"
-                          >
-                            جميع المواصفات الأساسية متطابقة بين الإعلانات المختارة.
-                          </td>
-                        </tr>
-                      ) : (
-                        visibleRows.map((row) => (
-                          <tr key={row.key} className="hover:bg-[var(--color-cream)]/30">
-                            <th
-                              scope="row"
-                              className="py-3.5 px-4 text-xs font-semibold text-[var(--color-muted)] sticky right-0 bg-[var(--color-cream)]/95 z-10 border-l border-[var(--color-border)]"
-                            >
-                              {row.label}
-                            </th>
-                            {compareListings.map((item) => (
-                              <td key={item.id} className="py-3.5 px-4 text-xs align-top">
-                                {row.renderCell(item)}
-                              </td>
-                            ))}
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                <p className="mt-4 text-center text-[10.5px] leading-relaxed text-[var(--color-muted)]">
+                  لا تقم بالتحويل المالي قبل المعاينة المباشرة للحلال والتحقق من المواصفات والبيانات.
+                </p>
               </div>
-            );
-          })()
-        )}
-      </div>
+            )}
 
-      {/* Related Listings from Existing Comparable Marketplace Data */}
-      {relatedListings.length > 0 && (
-        <section
-          aria-labelledby="related-listings-heading"
-          className="mt-10 pt-8 border-t border-[var(--color-border)]"
-        >
-          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3 mb-6">
-            <div>
-              <h2
-                id="related-listings-heading"
-                className="font-display text-xl sm:text-2xl font-extrabold text-[var(--color-ink)]"
-              >
-                عروض مشابهة قد تهمك
-              </h2>
-              <p className="mt-1 text-xs sm:text-sm text-[var(--color-muted)]">
-                إعلانات متاحة من نفس السلالة أو التصنيف للمقارنة والشراء المباشر
+            {/* Direct Message CTA & Form (Celebim ef Card) */}
+            {!isOwner && (
+              <div className="rounded-2xl border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-xs">
+                {currentUser && !isOwner ? (
+                  <form onSubmit={handleSendMessage} className="space-y-2.5">
+                    <label
+                      htmlFor="direct-msg"
+                      className="flex items-center gap-2 text-sm font-extrabold text-[var(--color-ink)]"
+                    >
+                      <MessageSquare size={15} className="text-[var(--color-green-ink)]" aria-hidden="true" />
+                      <span>إرسال رسالة عبر المنصة</span>
+                    </label>
+                    <textarea
+                      ref={directMsgRef}
+                      id="direct-msg"
+                      rows={3}
+                      value={messageText}
+                      onChange={(e) => {
+                        setMessageText(e.target.value);
+                        if (msgError) setMsgError('');
+                      }}
+                      className="w-full p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-warm)] dark:bg-[var(--color-cream)]/40 text-xs sm:text-sm text-[var(--color-ink)] focus:outline-none focus:border-[var(--color-green-ink)]"
+                    />
+                    <button
+                      type="submit"
+                      disabled={sendingMsg}
+                      className="w-full rounded-xl bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] px-4 py-3 text-sm font-bold text-white transition-colors inline-flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                    >
+                      <MessageSquare size={15} aria-hidden="true" />
+                      <span>{sendingMsg ? 'جاري الإرسال...' : 'إرسال رسالة للبائع'}</span>
+                    </button>
+                    {msgError && (
+                      <p
+                        role="alert"
+                        className="p-2.5 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-xs text-red-700 dark:text-red-300"
+                      >
+                        {msgError}
+                      </p>
+                    )}
+                    {msgSuccess && (
+                      <p className="text-xs font-semibold text-[var(--color-green-ink)]">
+                        تم إرسال رسالتك بنجاح. تابع الرد من تبويب «المحادثات» في حسابي.
+                      </p>
+                    )}
+                  </form>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onRequireAuth?.('login')}
+                    className="w-full rounded-xl bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] px-4 py-3 text-sm font-bold text-white transition-colors inline-flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <MessageSquare size={15} aria-hidden="true" />
+                    <span>سجّل الدخول لمراسلة البائع</span>
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Quick Price Offer Card (Celebim eg Card — when offers allowed) */}
+            {allowsOffers && !isOwner && (
+              <div className="rounded-2xl border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-xs">
+                <div className="mb-3">
+                  <h2 className="font-display text-sm font-extrabold text-[var(--color-ink)]">
+                    تقديم عرض سعر (سوم)
+                  </h2>
+                  <p className="mt-0.5 text-[11px] leading-4 text-[var(--color-muted)]">
+                    أدخل سعر السوم المقترح للرأس ليصل للمربي مباشرة في سجل التفاوض.
+                  </p>
+                </div>
+
+                <form onSubmit={handleQuickOfferSubmit} className="flex w-full gap-2">
+                  <div className="relative min-w-0 flex-1">
+                    <input
+                      type="number"
+                      min="1"
+                      placeholder={String(Math.round((listing.priceAmount * 0.92) / 10) * 10)}
+                      value={quickOfferInput}
+                      onChange={(e) => setQuickOfferInput(e.target.value)}
+                      aria-label="قيمة السوم بالريال السعودي"
+                      className="w-full rounded-xl border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface-warm)] dark:bg-[var(--color-cream)]/40 py-2.5 pr-3 pl-10 text-sm font-bold text-[var(--color-ink)] outline-none transition-colors focus:border-[var(--color-gold)] tabular-nums"
+                    />
+                    <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[11px] font-bold text-[var(--color-muted)]">
+                      ر.س
+                    </span>
+                  </div>
+                  <button
+                    type="submit"
+                    className="shrink-0 whitespace-nowrap rounded-xl bg-[var(--color-gold)] hover:bg-[var(--color-gold-hover)] px-4 py-2.5 text-xs font-extrabold text-[#10241B] transition-colors cursor-pointer"
+                  >
+                    سوم الآن
+                  </button>
+                </form>
+
+                {offerSuccess && (
+                  <p className="mt-2.5 text-xs font-semibold text-[var(--color-green-ink)] bg-[var(--color-gold-soft)]/50 border border-[var(--color-gold)]/40 rounded-lg px-3 py-2">
+                    تم تسجيل عرض سعرك وإشعار المربي بنجاح.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Quick Engagement Card (Like & Favorite) */}
+            <div className="rounded-2xl border-[1.5px] border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-xs space-y-3">
+              <div className="flex items-center gap-2 text-sm font-extrabold text-[var(--color-ink)]">
+                <Heart size={15} className="text-[var(--color-gold)]" aria-hidden="true" />
+                <span>تفاعل وحفظ العرض</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-[var(--color-muted)]">
+                أعجب بالإعلان أو احفظه في المفضلة للرجوع إليه بسهولة لاحقاً.
               </p>
-            </div>
-            <button
-              type="button"
-              onClick={onBack}
-              className="text-xs sm:text-sm font-semibold text-[var(--color-green-ink)] hover:underline cursor-pointer self-start sm:self-auto"
-            >
-              تصفح جميع الإعلانات
-            </button>
-          </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {relatedListings.map((item) => (
-              <ListingCard
-                key={item.id}
-                listing={item}
-                category={allCategories.find((c) => c.id === item.categoryId)}
-                breed={allBreeds.find((b) => b.id === item.breedId)}
-                subCategory={allCategories.find((c) => c.id === item.subCategoryId)}
-                region={allRegions.find((r) => r.id === item.regionId)}
-                seller={allSellers.find((s) => s.userId === item.sellerId)}
-                isFavorite={favoriteIds.includes(item.id)}
-                isLiked={likedListingIds.includes(item.id)}
-                onSelect={onSelectListing}
-                onSelectSeller={onOpenSellerProfile}
-                onToggleFavorite={onToggleFavorite}
-                onToggleLike={onToggleLike}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Compact Mobile Sticky Action Bar for Permitted Buyer/Visitor Actions */}
-      {!isOwner && listing.status === 'Published' && (
-        <div
-          className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur-md shadow-[0_-8px_24px_-12px_rgba(11,58,41,0.2)] pb-[max(0.5rem,env(safe-area-inset-bottom))]"
-          aria-label="إجراءات التواصل السريعة"
-        >
-          <div
-            aria-hidden="true"
-            className="h-[2px] w-full bg-gradient-to-l from-transparent via-[var(--color-gold)]/55 to-transparent"
-          />
-          <div className="max-w-7xl mx-auto px-3 pt-2 flex items-center justify-between gap-2.5">
-            <div className="min-w-0">
-              <p className="font-display text-base font-extrabold text-[var(--color-green-ink)] tabular-nums truncate">
-                {formatPriceSar(listing.priceAmount)}
-              </p>
-              <p className="text-[11px] text-[var(--color-muted)] tabular-nums truncate">
-                للرأس · {listing.quantity} رأس
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              {!currentUser ? (
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={() => onRequireAuth?.('login')}
-                  className="min-h-[44px] px-4 rounded-lg bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                  disabled={!likesEnabled || !onToggleLike}
+                  aria-pressed={isLiked}
+                  onClick={() => onToggleLike?.(listing.id)}
+                  className={`h-10 px-3 rounded-xl border text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 ${
+                    isLiked
+                      ? 'bg-[var(--color-gold-soft)]/70 border-[var(--color-gold)] text-[var(--color-green-ink)]'
+                      : 'bg-[var(--color-surface-warm)] border-[var(--color-border)] text-[var(--color-ink)] hover:border-[var(--color-gold)]'
+                  }`}
                 >
-                  <LogIn size={14} aria-hidden="true" />
-                  <span>تسجيل الدخول للتواصل</span>
+                  <ThumbsUp
+                    size={14}
+                    aria-hidden="true"
+                    className={isLiked ? 'fill-[var(--color-gold)] text-[var(--color-green-ink)]' : ''}
+                  />
+                  <span>{isLiked ? 'أعجبني' : 'إعجاب'}</span>
+                  <span className="tabular-nums">({likesCount})</span>
                 </button>
-              ) : (
-                <>
-                  {allowsOffers && (
-                    <button
-                      type="button"
-                      onClick={handleOpenOfferModal}
-                      className="min-h-[44px] px-3.5 rounded-lg bg-[var(--color-gold)] hover:bg-[var(--color-gold-hover)] text-[#14261D] text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <BadgeDollarSign size={14} aria-hidden="true" />
-                      <span>تقديم سوم</span>
-                    </button>
-                  )}
 
-                  {contactLinks.whatsappHref ? (
-                    <a
-                      href={contactLinks.whatsappHref}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="min-h-[44px] px-3.5 rounded-lg bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-semibold inline-flex items-center gap-1.5"
-                    >
-                      <span>واتساب</span>
-                    </a>
-                  ) : contactLinks.telHref ? (
-                    <a
-                      href={contactLinks.telHref}
-                      className="min-h-[44px] px-3.5 rounded-lg bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-semibold inline-flex items-center gap-1.5"
-                    >
-                      <Phone size={14} aria-hidden="true" />
-                      <span>اتصال</span>
-                    </a>
-                  ) : seller?.contactAvailable !== false && !revealedContact ? (
-                    <button
-                      type="button"
-                      disabled={revealingContact}
-                      onClick={handleRevealContact}
-                      className="min-h-[44px] px-3.5 rounded-lg bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
-                    >
-                      <Phone size={14} aria-hidden="true" />
-                      <span>{revealingContact ? 'جاري التحقق...' : 'إظهار الرقم'}</span>
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={focusDirectMessageForm}
-                      className="min-h-[44px] px-3.5 rounded-lg bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <MessageSquare size={14} aria-hidden="true" />
-                      <span>مراسلة البائع</span>
-                    </button>
-                  )}
-                </>
-              )}
+                <button
+                  type="button"
+                  aria-pressed={isFavorite}
+                  onClick={() => onToggleFavorite(listing.id)}
+                  className={`h-10 px-3 rounded-xl border text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+                    isFavorite
+                      ? 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-300'
+                      : 'bg-[var(--color-surface-warm)] border-[var(--color-border)] text-[var(--color-ink)] hover:border-[var(--color-gold)]'
+                  }`}
+                >
+                  <Heart size={14} fill={isFavorite ? 'currentColor' : 'none'} aria-hidden="true" />
+                  <span>{isFavorite ? 'في المفضلة' : 'حفظ'}</span>
+                </button>
+              </div>
             </div>
-          </div>
+          </aside>
         </div>
-      )}
 
-      {/* Price Offer Modal */}
-      <Modal
-        open={showOfferModal}
-        onClose={() => setShowOfferModal(false)}
-        title="تقديم عرض سعر للمربي"
-        subtitle={`السعر المطلوب: ${formatPriceSar(listing.priceAmount)}${
-          listing.expectedPrice ? ` · السعر المتوقع: ${formatPriceSar(listing.expectedPrice)}` : ''
-        }`}
-        size="md"
-      >
-        <form onSubmit={handleOfferSubmit} className="space-y-4">
-          {offerError && (
-            <p className="p-2.5 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-xs text-red-700 dark:text-red-300">
-              {offerError}
-            </p>
-          )}
+        {/* Public Questions & Comments Section */}
+        <ListingCommentsSection
+          listing={listing}
+          currentUser={currentUser}
+          refreshSignal={commentRefreshSignal}
+          targetCommentId={targetCommentId}
+          onRequireAuth={() => onRequireAuth?.('login')}
+          onNotify={onNotify}
+        />
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label
-                htmlFor="offer-price"
-                className="block text-xs font-medium text-[var(--color-muted)] mb-1"
+        {/* Related Listings (Rendered with Celebim-inspired Showcase Cards) */}
+        {relatedListings.length > 0 && (
+          <section
+            aria-labelledby="related-listings-heading"
+            className="mt-10 pt-8 border-t border-[var(--color-border)]"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3 mb-6">
+              <div className="flex items-stretch gap-3">
+                <span className="w-1 shrink-0 rounded-full bg-[var(--color-gold)]" aria-hidden="true" />
+                <div>
+                  <h2
+                    id="related-listings-heading"
+                    className="font-display text-xl sm:text-2xl font-extrabold text-[var(--color-ink)]"
+                  >
+                    عروض مشابهة قد تهمك
+                  </h2>
+                  <p className="mt-1 text-xs sm:text-sm text-[var(--color-muted)]">
+                    إعلانات متاحة من نفس السلالة أو التصنيف للمقارنة والشراء المباشر
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onBack}
+                className="text-xs sm:text-sm font-bold text-[var(--color-green-ink)] hover:underline cursor-pointer self-start sm:self-auto"
               >
-                السعر المقترح للرأس (ر.س)
-              </label>
-              <input
-                id="offer-price"
-                type="number"
-                min="100"
-                value={offeredPrice}
-                onChange={(e) => setOfferedPrice(e.target.value)}
-                required
-                className="w-full h-10 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-ink)] tabular-nums"
-              />
+                تصفح جميع الإعلانات
+              </button>
             </div>
 
-            <div>
-              <label
-                htmlFor="offer-qty"
-                className="block text-xs font-medium text-[var(--color-muted)] mb-1"
-              >
-                الكمية المطلوبة (بحد أقصى {listing.quantity})
-              </label>
-              <input
-                id="offer-qty"
-                type="number"
-                min="1"
-                max={listing.quantity}
-                value={offerQuantity}
-                onChange={(e) => setOfferQuantity(e.target.value)}
-                required
-                className="w-full h-10 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-ink)] tabular-nums"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+              {relatedListings.map((item) => (
+                <ListingCard
+                  key={item.id}
+                  listing={item}
+                  variant="showcase"
+                  currentUserId={currentUser?.id ?? null}
+                  category={allCategories.find((c) => c.id === item.categoryId)}
+                  breed={allBreeds.find((b) => b.id === item.breedId)}
+                  subCategory={allCategories.find((c) => c.id === item.subCategoryId)}
+                  region={allRegions.find((r) => r.id === item.regionId)}
+                  seller={allSellers.find((s) => s.userId === item.sellerId)}
+                  isFavorite={favoriteIds.includes(item.id)}
+                  isLiked={likedListingIds.includes(item.id)}
+                  onSelect={onSelectListing}
+                  onSelectSeller={onOpenSellerProfile}
+                  onToggleFavorite={onToggleFavorite}
+                  onToggleLike={onToggleLike}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Compact Mobile Sticky Action Bar (Celebim ek Bar Layout) */}
+        {!isOwner && isPublished && (
+          <div
+            className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur-md shadow-[0_-4px_16px_rgba(16,60,44,0.1)] p-3"
+            style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
+            aria-label="إجراءات التواصل السريعة"
+          >
+            <div className="flex items-center gap-2.5 max-w-[600px] mx-auto">
+              <div className="flex-1 min-w-0">
+                <p className="font-display text-lg font-black text-[var(--color-green-ink)] leading-none tabular-nums truncate">
+                  {formatPriceSar(listing.priceAmount)}
+                </p>
+                <p className="text-[11px] font-semibold text-[var(--color-muted)] truncate mt-1 tabular-nums">
+                  للرأس · {listing.quantity} رأس
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                {!currentUser ? (
+                  <button
+                    type="button"
+                    onClick={() => onRequireAuth?.('login')}
+                    className="min-h-[44px] px-4 rounded-xl bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <LogIn size={14} aria-hidden="true" />
+                    <span>تسجيل الدخول للتواصل</span>
+                  </button>
+                ) : (
+                  <>
+                    {allowsOffers && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenOfferModal()}
+                        className="min-h-[44px] px-3.5 rounded-xl bg-[var(--color-gold)] hover:bg-[var(--color-gold-hover)] text-[#10241B] text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <BadgeDollarSign size={15} aria-hidden="true" />
+                        <span>سوم</span>
+                      </button>
+                    )}
+
+                    {contactLinks.telHref ? (
+                      <a
+                        href={contactLinks.telHref}
+                        aria-label="اتصال هاتفي بالبائع"
+                        className="w-[44px] h-[44px] rounded-xl bg-[var(--color-gold-soft)] text-[var(--color-green-ink)] border border-[var(--color-gold)]/55 flex items-center justify-center shrink-0"
+                      >
+                        <Phone size={18} aria-hidden="true" />
+                      </a>
+                    ) : seller?.contactAvailable !== false && !revealedContact ? (
+                      <button
+                        type="button"
+                        disabled={revealingContact}
+                        onClick={handleRevealContact}
+                        aria-label="إظهار رقم البائع"
+                        className="w-[44px] h-[44px] rounded-xl bg-[var(--color-gold-soft)] text-[var(--color-green-ink)] border border-[var(--color-gold)]/55 flex items-center justify-center shrink-0 cursor-pointer disabled:opacity-60"
+                      >
+                        <Phone size={18} aria-hidden="true" />
+                      </button>
+                    ) : null}
+
+                    {contactLinks.whatsappHref ? (
+                      <a
+                        href={contactLinks.whatsappHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="min-h-[44px] px-4 rounded-xl bg-[#1B7A3A] hover:bg-[#155f2c] text-white text-xs font-bold inline-flex items-center gap-1.5 shrink-0"
+                      >
+                        <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current" aria-hidden="true">
+                          <path d="M12.04 2a9.93 9.93 0 0 0-8.5 15.05L2 22l5.1-1.34A9.93 9.93 0 1 0 12.04 2Zm5.78 14.08c-.24.68-1.4 1.3-1.94 1.38-.5.07-1.13.1-1.82-.12-.42-.14-.96-.32-1.65-.62-2.9-1.25-4.79-4.18-4.93-4.37-.14-.2-1.18-1.57-1.18-3 0-1.42.74-2.12 1-2.41.27-.29.58-.36.77-.36h.56c.18 0 .42-.07.66.5.24.58.82 2 .9 2.14.07.14.12.31.02.5-.1.2-.15.32-.29.49-.15.17-.3.38-.44.51-.14.15-.3.3-.13.59.17.29.75 1.24 1.61 2.01 1.11.99 2.04 1.3 2.33 1.44.29.15.46.12.63-.07.17-.2.72-.84.91-1.13.2-.29.39-.24.65-.15.27.1 1.68.8 1.97.94.29.15.48.22.55.34.07.12.07.7-.17 1.38Z" />
+                        </svg>
+                        <span>واتساب</span>
+                      </a>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={focusDirectMessageForm}
+                        className="min-h-[44px] px-4 rounded-xl bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer shrink-0"
+                      >
+                        <MessageSquare size={14} aria-hidden="true" />
+                        <span>مراسلة</span>
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
           </div>
+        )}
 
-          <div className="p-3 rounded-lg bg-[var(--color-cream)] border border-[var(--color-border)] flex items-center justify-between text-xs">
-            <span className="text-[var(--color-muted)]">إجمالي قيمة العرض:</span>
-            <span className="font-display text-base font-extrabold text-[var(--color-green-ink)] tabular-nums">
-              {formatPriceSar(offerTotal)}
-            </span>
-          </div>
-
-          <div>
-            <label
-              htmlFor="offer-note"
-              className="block text-xs font-medium text-[var(--color-muted)] mb-1"
-            >
-              ملاحظات للمربي (اختياري)
-            </label>
-            <textarea
-              id="offer-note"
-              rows={3}
-              value={offerNote}
-              onChange={(e) => setOfferNote(e.target.value)}
-              placeholder="مثال: الشراء نقداً بعد المعاينة أو طلب التوصيل..."
-              className="w-full p-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-ink)] placeholder:text-[var(--color-muted)]/75"
-            />
-          </div>
-
-          <div className="flex items-center justify-end gap-2 pt-3 border-t border-[var(--color-border)]">
-            <button
-              type="button"
-              onClick={() => setShowOfferModal(false)}
-              className="px-4 py-2 rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-muted)] hover:bg-[var(--color-cream)] cursor-pointer"
-            >
-              إلغاء
-            </button>
-            <button
-              type="submit"
-              disabled={offerSubmitting}
-              className="px-5 py-2 rounded-lg bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-semibold cursor-pointer disabled:opacity-60"
-            >
-              {offerSubmitting ? 'جاري الإرسال...' : 'إرسال عرض السعر'}
-            </button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* Report Modal */}
-      <Modal
-        open={showReportModal}
-        onClose={() => setShowReportModal(false)}
-        title="إبلاغ عن مخالفة"
-        subtitle="يتم مراجعة البلاغات من قِبل فريق الإشراف للحفاظ على جودة ومصداقية السوق."
-        size="md"
-      >
-        {reportSent ? (
-          <div className="p-4 rounded-lg bg-[var(--color-cream)] text-sm font-medium text-[var(--color-green-ink)]">
-            تم استلام بلاغك بنجاح وسيتم مراجعته من قِبل المشرفين.
-          </div>
-        ) : (
-          <form onSubmit={handleReportSubmit} className="space-y-4">
-            {reportError && (
-              <p
-                role="alert"
-                className="p-2.5 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-xs text-red-700 dark:text-red-300"
-              >
-                {reportError}
+        {/* Price Offer Modal */}
+        <Modal
+          open={showOfferModal}
+          onClose={() => setShowOfferModal(false)}
+          title="تقديم عرض سعر للمربي"
+          subtitle={`السعر المطلوب: ${formatPriceSar(listing.priceAmount)}${
+            listing.expectedPrice ? ` · السعر المتوقع: ${formatPriceSar(listing.expectedPrice)}` : ''
+          }`}
+          size="md"
+        >
+          <form onSubmit={handleOfferSubmit} className="space-y-4">
+            {offerError && (
+              <p className="p-2.5 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-xs text-red-700 dark:text-red-300">
+                {offerError}
               </p>
             )}
-            <div>
-              <label
-                htmlFor="rep-reason"
-                className="block text-xs font-medium text-[var(--color-muted)] mb-1"
-              >
-                سبب البلاغ
-              </label>
-              <select
-                id="rep-reason"
-                value={reportReason}
-                onChange={(e) => setReportReason(e.target.value)}
-                className="w-full h-10 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-ink)]"
-              >
-                <option value="بيانات غير مطابقة">بيانات أو صور غير مطابقة</option>
-                <option value="سعر وهمي أو مضلل">سعر وهمي أو مضلل</option>
-                <option value="إعلان مكرر">إعلان مكرر</option>
-                <option value="مخالفة لشروط السوق">مخالفة لشروط السوق</option>
-              </select>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label
+                  htmlFor="offer-price"
+                  className="block text-xs font-medium text-[var(--color-muted)] mb-1"
+                >
+                  السعر المقترح للرأس (ر.س)
+                </label>
+                <input
+                  id="offer-price"
+                  type="number"
+                  min="100"
+                  value={offeredPrice}
+                  onChange={(e) => setOfferedPrice(e.target.value)}
+                  required
+                  className="w-full h-10 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-ink)] tabular-nums"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="offer-qty"
+                  className="block text-xs font-medium text-[var(--color-muted)] mb-1"
+                >
+                  الكمية المطلوبة (بحد أقصى {listing.quantity})
+                </label>
+                <input
+                  id="offer-qty"
+                  type="number"
+                  min="1"
+                  max={listing.quantity}
+                  value={offerQuantity}
+                  onChange={(e) => setOfferQuantity(e.target.value)}
+                  required
+                  className="w-full h-10 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-ink)] tabular-nums"
+                />
+              </div>
+            </div>
+
+            <div className="p-3 rounded-lg bg-[var(--color-cream)] border border-[var(--color-border)] flex items-center justify-between text-xs">
+              <span className="text-[var(--color-muted)]">إجمالي قيمة العرض:</span>
+              <span className="font-display text-base font-extrabold text-[var(--color-green-ink)] tabular-nums">
+                {formatPriceSar(offerTotal)}
+              </span>
             </div>
 
             <div>
               <label
-                htmlFor="rep-details"
+                htmlFor="offer-note"
                 className="block text-xs font-medium text-[var(--color-muted)] mb-1"
               >
-                تفاصيل إضافية
+                ملاحظات للمربي (اختياري)
               </label>
               <textarea
-                id="rep-details"
+                id="offer-note"
                 rows={3}
-                value={reportDetails}
-                onChange={(e) => setReportDetails(e.target.value)}
-                placeholder="اكتب ملاحظتك لمشرفي المنصة..."
+                value={offerNote}
+                onChange={(e) => setOfferNote(e.target.value)}
+                placeholder="مثال: الشراء نقداً بعد المعاينة أو طلب التوصيل..."
                 className="w-full p-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-ink)] placeholder:text-[var(--color-muted)]/75"
               />
             </div>
 
-            <div className="flex justify-end gap-2 pt-3 border-t border-[var(--color-border)]">
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-[var(--color-border)]">
               <button
                 type="button"
-                onClick={() => setShowReportModal(false)}
-                className="px-4 py-2 rounded-lg border border-[var(--color-border)] text-sm text-[var(--color-muted)] cursor-pointer"
+                onClick={() => setShowOfferModal(false)}
+                className="px-4 py-2 rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-muted)] hover:bg-[var(--color-cream)] cursor-pointer"
               >
                 إلغاء
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 rounded-lg bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-sm font-semibold cursor-pointer"
+                disabled={offerSubmitting}
+                className="px-5 py-2 rounded-lg bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-xs font-semibold cursor-pointer disabled:opacity-60"
               >
-                إرسال البلاغ
+                {offerSubmitting ? 'جاري الإرسال...' : 'إرسال عرض السعر'}
               </button>
             </div>
           </form>
-        )}
-      </Modal>
+        </Modal>
 
-      {/* Fullscreen Accessible Lightbox Modal for Photo Inspection */}
-      <ImageLightbox
-        open={lightboxOpen && activeMedia?.kind === 'image'}
-        images={images}
-        currentIndex={activeImageIndex}
-        title={listing.title}
-        onClose={() => setLightboxOpen(false)}
-        onChangeIndex={(nextImgIdx) => {
-          const targetUrl = images[nextImgIdx]?.url;
-          const mappedIdx = galleryItems.findIndex(
-            (g) => g.kind === 'image' && g.url === targetUrl
-          );
-          setActiveMediaIdx(mappedIdx >= 0 ? mappedIdx : nextImgIdx);
-        }}
-        returnFocusRef={zoomBtnRef}
-      />
-
-      <MarkSoldModal
-        open={markSoldOpen}
-        onClose={() => setMarkSoldOpen(false)}
-        listing={listing}
-        commissionSettings={commissionSettings}
-        commissionEligibility={commissionEligibility}
-        onSoldComplete={async () => {
-          await onRefreshData?.();
-        }}
-        onTransferSubmitted={async () => {
-          await onRefreshData?.();
-        }}
-        onNotify={onNotify}
-      />
-
-      {localToast && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="fixed bottom-[calc(5.25rem+env(safe-area-inset-bottom))] md:bottom-5 left-4 right-4 sm:right-auto sm:left-5 z-50 bg-[var(--color-green)] text-white px-5 py-3 rounded-xl shadow-lg text-sm font-medium border border-[var(--color-gold)]/50 text-center sm:text-right"
+        {/* Report Modal */}
+        <Modal
+          open={showReportModal}
+          onClose={() => setShowReportModal(false)}
+          title="إبلاغ عن مخالفة"
+          subtitle="يتم مراجعة البلاغات من قِبل فريق الإشراف للحفاظ على جودة ومصداقية السوق."
+          size="md"
         >
-          {localToast}
-        </div>
-      )}
+          {reportSent ? (
+            <div className="p-4 rounded-lg bg-[var(--color-cream)] text-sm font-medium text-[var(--color-green-ink)]">
+              تم استلام بلاغك بنجاح وسيتم مراجعته من قِبل المشرفين.
+            </div>
+          ) : (
+            <form onSubmit={handleReportSubmit} className="space-y-4">
+              {reportError && (
+                <p
+                  role="alert"
+                  className="p-2.5 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-xs text-red-700 dark:text-red-300"
+                >
+                  {reportError}
+                </p>
+              )}
+              <div>
+                <label
+                  htmlFor="rep-reason"
+                  className="block text-xs font-medium text-[var(--color-muted)] mb-1"
+                >
+                  سبب البلاغ
+                </label>
+                <select
+                  id="rep-reason"
+                  value={reportReason}
+                  onChange={(e) => setReportReason(e.target.value)}
+                  className="w-full h-10 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-ink)]"
+                >
+                  <option value="بيانات غير مطابقة">بيانات أو صور غير مطابقة</option>
+                  <option value="سعر وهمي أو مضلل">سعر وهمي أو مضلل</option>
+                  <option value="إعلان مكرر">إعلان مكرر</option>
+                  <option value="مخالفة لشروط السوق">مخالفة لشروط السوق</option>
+                </select>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="rep-details"
+                  className="block text-xs font-medium text-[var(--color-muted)] mb-1"
+                >
+                  تفاصيل إضافية
+                </label>
+                <textarea
+                  id="rep-details"
+                  rows={3}
+                  value={reportDetails}
+                  onChange={(e) => setReportDetails(e.target.value)}
+                  placeholder="اكتب ملاحظتك لمشرفي المنصة..."
+                  className="w-full p-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-ink)] placeholder:text-[var(--color-muted)]/75"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-[var(--color-border)]">
+                <button
+                  type="button"
+                  onClick={() => setShowReportModal(false)}
+                  className="px-4 py-2 rounded-lg border border-[var(--color-border)] text-sm text-[var(--color-muted)] cursor-pointer"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-lg bg-[var(--color-green)] hover:bg-[var(--color-green-hover)] text-white text-sm font-semibold cursor-pointer"
+                >
+                  إرسال البلاغ
+                </button>
+              </div>
+            </form>
+          )}
+        </Modal>
+
+        {/* Fullscreen Accessible Lightbox Modal for Photo Inspection */}
+        <ImageLightbox
+          open={lightboxOpen && activeMedia?.kind === 'image'}
+          images={images}
+          currentIndex={activeImageIndex}
+          title={listing.title}
+          onClose={() => setLightboxOpen(false)}
+          onChangeIndex={(nextImgIdx) => {
+            const targetUrl = images[nextImgIdx]?.url;
+            const mappedIdx = galleryItems.findIndex(
+              (g) => g.kind === 'image' && g.url === targetUrl
+            );
+            setActiveMediaIdx(mappedIdx >= 0 ? mappedIdx : nextImgIdx);
+          }}
+          returnFocusRef={zoomBtnRef}
+        />
+
+        <MarkSoldModal
+          open={markSoldOpen}
+          onClose={() => setMarkSoldOpen(false)}
+          listing={listing}
+          commissionSettings={commissionSettings}
+          commissionEligibility={commissionEligibility}
+          onSoldComplete={async () => {
+            await onRefreshData?.();
+          }}
+          onTransferSubmitted={async () => {
+            await onRefreshData?.();
+          }}
+          onNotify={onNotify}
+        />
+
+        {localToast && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="fixed bottom-[calc(5.25rem+env(safe-area-inset-bottom))] md:bottom-5 left-4 right-4 sm:right-auto sm:left-5 z-50 bg-[var(--color-green)] text-white px-5 py-3 rounded-xl shadow-lg text-sm font-medium border border-[var(--color-gold)]/50 text-center sm:text-right"
+          >
+            {localToast}
+          </div>
+        )}
       </div>
     </section>
   );
